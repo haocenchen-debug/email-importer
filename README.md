@@ -1,0 +1,77 @@
+# Obsidian Email Importer
+
+An Obsidian plugin that imports email from Gmail and QQ Mail via IMAP and saves messages into your vault as Markdown notes.
+
+## Highlights
+- Gmail import
+- QQ Mail import
+- IMAP connection test
+- `UNSEEN` / `ALL` search support
+- Duplicate prevention using `Message-ID`
+- Auto-create folder structure
+- Separate output folders per account
+- Run sync directly from Obsidian
+
+## Repository structure
+```text
+obsidian-email-importer/
+├── plugin/
+│   ├── LICENSE
+│   ├── README.md
+│   ├── main.js
+│   ├── manifest.json
+│   └── styles.css
+├── .gitignore
+├── README.md
+├── LICENSE.md
+└── RELEASE_NOTES.md
+```
+
+## Plugin folder
+The actual plugin files live in:
+
+```text
+plugin/
+```
+
+If you want to install it manually into Obsidian, copy the files from `plugin/` into your local plugin directory.
+
+## Recommended GitHub repository metadata
+**Repository name**
+```text
+obsidian-email-importer
+```
+
+**Description**
+```text
+Import Gmail and QQ Mail into Obsidian via IMAP and save messages as Markdown notes.
+```
+
+**Suggested topics**
+```text
+obsidian
+obsidian-plugin
+email
+gmail
+qq-mail
+imap
+markdown
+knowledge-management
+```
+
+## License
+This project uses:
+
+```text
+CC BY-NC-SA 4.0
+```
+
+Please read:
+- `plugin/LICENSE`
+- `LICENSE.md`
+
+before publishing or reusing the project.
+
+## Publishing suggestion
+Do **not** publish your entire vault.
+Only publish this extracted repository folder.

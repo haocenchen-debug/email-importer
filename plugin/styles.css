@@ -1,0 +1,11 @@
+.email-importer-account {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 16px;
+}
+
+.email-importer-account h4 {
+  margin-top: 0;
+  margin-bottom: 12px;
+}
