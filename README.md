@@ -75,3 +75,20 @@ before publishing or reusing the project.
 ## Publishing suggestion
 Do **not** publish your entire vault.
 Only publish this extracted repository folder.
+
+
+## Roadmap
+- Better MIME parsing
+- Attachment export
+- Smarter HTML email cleanup
+- Rule-based classification
+- Optional AI summarization
+- Better settings UI
+- More mailbox providers
+
+## Screenshot placeholders
+You can later add screenshots for:
+- plugin settings page
+- Gmail configuration example
+- QQ Mail configuration example
+- imported Markdown note example
