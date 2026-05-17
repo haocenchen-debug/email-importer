@@ -186,6 +186,10 @@ module.exports = class EmailImporterPlugin extends Plugin {
       }
     });
 
+    this.addRibbonIcon('mail', '同步 Gmail / QQ 邮件', async () => {
+      await this.syncAllAccounts();
+    });
+
     this.addSettingTab(new EmailImporterSettingTab(this.app, this));
 
     try {
@@ -316,6 +320,16 @@ class EmailImporterSettingTab extends PluginSettingTab {
     containerEl.createEl('h2', { text: 'Email Importer 设置' });
 
     new Setting(containerEl)
+      .setName('📥 立即同步邮件')
+      .setDesc('最常用入口：点击后立即同步所有已启用邮箱')
+      .addButton((button) => button
+        .setButtonText('开始同步')
+        .setCta()
+        .onClick(async () => {
+          await this.plugin.syncAllAccounts();
+        }));
+
+    new Setting(containerEl)
       .setName('输出目录')
       .setDesc('全局默认输出目录；如果某个邮箱配置了自己的输出目录，会优先使用该邮箱目录')
       .addText((text) => text
@@ -440,10 +454,9 @@ class EmailImporterSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('立即同步')
-      .setDesc('保存设置后手动执行一次同步')
+      .setDesc('备用入口：和顶部“立即同步邮件”按钮功能相同')
       .addButton((button) => button
         .setButtonText('开始同步')
-        .setCta()
         .onClick(async () => {
           await this.plugin.syncAllAccounts();
         }));
@@ -716,6 +729,8 @@ function cleanupText(text) {
 
 function stripMimeResidue(text) {
   return String(text || '')
+    .replace(/<!DOCTYPE[\s\S]*$/i, '')
+    .replace(/<html[\s\S]*$/i, '')
     .replace(/(?:^|\n)--[^\s\n]+(?:--)?(?=\n|$)/g, '\n')
     .replace(/(?:^|\n)\s*(Content-Type|Content-Transfer-Encoding|Content-Disposition|Content-ID|Mime-Version):[^\n]*(?:\n[ \t]+[^\n]*)*/gi, '\n')
     .replace(/(?:^|\n)\s*charset="?[^"\n;]+"?/gi, '\n')
