@@ -11,6 +11,8 @@ An Obsidian plugin that imports email from Gmail and QQ Mail via IMAP and saves 
 - Auto-create folder structure
 - Separate output folders per account
 - Run sync directly from Obsidian
+- Export attachments and link them from email notes
+- Organize imported mail by sender name and sender email
 
 ## Repository structure
 ```text

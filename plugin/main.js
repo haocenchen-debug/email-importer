@@ -332,40 +332,44 @@ module.exports = class EmailImporterPlugin extends Plugin {
       const unreadSeqs = await client.search('UNSEEN');
       const readSeqs = account.syncRead ? await client.search('SEEN') : [];
       const maxEmails = Number(account.maxEmails || 10);
-      const targets = [
-        ...unreadSeqs.slice(-maxEmails).map((seq) => ({ seq, readState: 'unread' })),
-        ...readSeqs.slice(-maxEmails).map((seq) => ({ seq, readState: 'read' }))
-      ];
-
-      for (const target of targets) {
-        const seq = target.seq;
-        const fetched = await client.fetchFull(seq);
-        const email = parseFetchResponse(fetched.lines);
-        const messageIdKey = email.messageId || `${account.id}:${target.readState}:${seq}:${email.subject}`;
-        if (this.settings.importedMessageIds[messageIdKey]) continue;
-        const filterResult = shouldSkipEmail(email, this.settings);
-        if (filterResult.skip) {
-          skipped += 1;
+      const processSeqs = async (seqs, readState) => {
+        let importedForState = 0;
+        for (const seq of [...seqs].reverse()) {
+          if (importedForState >= maxEmails) break;
+          const fetched = await client.fetchFull(seq);
+          const email = parseFetchResponse(fetched.lines);
+          const messageIdKey = email.messageId || `${account.id}:${readState}:${seq}:${email.subject}`;
+          if (this.settings.importedMessageIds[messageIdKey]) continue;
+          const filterResult = shouldSkipEmail(email, this.settings);
+          if (filterResult.skip) {
+            skipped += 1;
+            this.settings.importedMessageIds[messageIdKey] = {
+              importedAt: new Date().toISOString(),
+              account: account.name,
+              subject: email.subject || '',
+              skipped: true,
+              reason: filterResult.reason
+            };
+            continue;
+          }
+          await this.writeEmailNote(account, email, readState);
           this.settings.importedMessageIds[messageIdKey] = {
             importedAt: new Date().toISOString(),
             account: account.name,
             subject: email.subject || '',
-            skipped: true,
-            reason: filterResult.reason
+            readState
           };
-          continue;
+          imported += 1;
+          importedForState += 1;
+          if (account.markSeen) {
+            await client.addFlags(seq, ['\\Seen']);
+          }
         }
-        await this.writeEmailNote(account, email, target.readState);
-        this.settings.importedMessageIds[messageIdKey] = {
-          importedAt: new Date().toISOString(),
-          account: account.name,
-          subject: email.subject || '',
-          readState: target.readState
-        };
-        imported += 1;
-        if (account.markSeen) {
-          await client.addFlags(seq, ['\\Seen']);
-        }
+      };
+
+      await processSeqs(unreadSeqs, 'unread');
+      if (account.syncRead) {
+        await processSeqs(readSeqs, 'read');
       }
     } finally {
       await client.close();
@@ -374,7 +378,8 @@ module.exports = class EmailImporterPlugin extends Plugin {
   }
 
   async writeEmailNote(account, email, readState = 'unread') {
-    const folder = resolveAccountOutputFolder(account, this.settings, readState);
+    const baseFolder = resolveAccountOutputFolder(account, this.settings, readState);
+    const folder = resolveSenderOutputFolder(baseFolder, email.from || '');
     await ensureFolder(this.app, folder);
 
     const date = normalizeDate(email.date);
@@ -387,14 +392,34 @@ module.exports = class EmailImporterPlugin extends Plugin {
     })) + '.md';
     const filePath = uniquePath(this.app, path.posix.join(folder, fileName));
     const bodyText = summarizeText(email.bodyText || '', this.settings.summaryLength);
+    const attachmentLinks = await this.saveEmailAttachments(folder, subject, email.attachments || []);
     const content = buildNoteContent({
       account,
       email,
       date,
       bodyText,
+      attachmentLinks,
       category: this.settings.defaultCategory || '待整理'
     });
     await this.app.vault.create(filePath, content);
+  }
+
+  async saveEmailAttachments(folder, subject, attachments) {
+    if (!attachments.length) return [];
+    const attachmentFolder = path.posix.join(folder, '附件', sanitizeFileName(subject || '无主题邮件'));
+    await ensureFolder(this.app, attachmentFolder);
+    const links = [];
+    for (const attachment of attachments) {
+      const safeName = sanitizeFileName(attachment.filename || '附件');
+      const filePath = uniquePath(this.app, path.posix.join(attachmentFolder, safeName));
+      await this.app.vault.createBinary(filePath, attachment.content);
+      links.push({
+        name: safeName,
+        path: filePath,
+        contentType: attachment.contentType || ''
+      });
+    }
+    return links;
   }
 };
 
@@ -707,6 +732,15 @@ function extractEmailAddress(from) {
   return (emailMatch?.[0] || String(from || '')).trim();
 }
 
+function extractSenderName(from) {
+  const value = decodeMimeWords(String(from || '')).trim();
+  const angleIndex = value.indexOf('<');
+  if (angleIndex > 0) {
+    return value.slice(0, angleIndex).replace(/^["']|["']$/g, '').trim();
+  }
+  return value.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig, '').replace(/[<>()"']/g, '').trim();
+}
+
 function emailRuleMatches(email, rule) {
   if (!email || !rule) return false;
   if (rule.startsWith('@')) return email.endsWith(rule);
@@ -730,12 +764,14 @@ function parseFetchResponse(lines) {
   const decodedSubject = decodeMimeWords(subject || '');
   const decodedFrom = decodeMimeWords(from || '');
   const bodyText = extractReadableText(rawEmail);
+  const attachments = extractAttachments(rawEmail);
   return {
     subject: decodedSubject || '无主题邮件',
     from: decodedFrom || '',
     date: date || '',
     messageId: (messageId || '').trim(),
-    bodyText
+    bodyText,
+    attachments
   };
 }
 
@@ -788,12 +824,53 @@ function extractReadableText(rawBody) {
   return stripMimeResidue(parseMimeEntity(rawBody) || '');
 }
 
+function extractAttachments(rawEmail) {
+  const attachments = [];
+  collectAttachments(rawEmail, attachments);
+  return attachments;
+}
+
+function collectAttachments(entityText, attachments, depth = 0) {
+  if (depth > 8) return;
+  const normalized = String(entityText || '').replace(/\r/g, '');
+  const { headers, body } = splitHeadersAndBody(normalized);
+  const contentType = getHeaderValue(headers, 'Content-Type').toLowerCase();
+  const contentDisposition = getHeaderValue(headers, 'Content-Disposition').toLowerCase();
+  const fallbackBoundary = extractBoundaryFromText(body);
+
+  if (contentType.includes('multipart/') || fallbackBoundary) {
+    const boundary = extractBoundary(contentType) || fallbackBoundary;
+    if (!boundary) return;
+    const parts = splitMimeParts(body, boundary);
+    for (const part of parts) {
+      collectAttachments(part, attachments, depth + 1);
+    }
+    return;
+  }
+
+  if (!isAttachmentPart(contentType, contentDisposition)) return;
+  const filename = extractAttachmentFilename(headers, contentType, contentDisposition);
+  const transferEncoding = getHeaderValue(headers, 'Content-Transfer-Encoding').toLowerCase();
+  const content = decodeTransferEncodingToBuffer(body, transferEncoding);
+  if (!content.length) return;
+  attachments.push({
+    filename: normalizeAttachmentFilename(filename, contentType, content, attachments.length + 1),
+    contentType: contentType.split(';')[0].trim(),
+    content
+  });
+}
+
 function parseMimeEntity(entityText, depth = 0) {
   if (depth > 8) return '';
   const normalized = String(entityText || '').replace(/\r/g, '');
   const { headers, body } = splitHeadersAndBody(normalized);
   const contentType = getHeaderValue(headers, 'Content-Type').toLowerCase();
+  const contentDisposition = getHeaderValue(headers, 'Content-Disposition').toLowerCase();
   const fallbackBoundary = extractBoundaryFromText(body);
+
+  if (isAttachmentPart(contentType, contentDisposition)) {
+    return '';
+  }
 
   if (contentType.includes('multipart/') || fallbackBoundary) {
     const boundary = extractBoundary(contentType) || fallbackBoundary;
@@ -805,6 +882,8 @@ function parseMimeEntity(entityText, depth = 0) {
       for (const part of parts) {
         const partHeaders = splitHeadersAndBody(part).headers;
         const partType = getHeaderValue(partHeaders, 'Content-Type').toLowerCase();
+        const partDisposition = getHeaderValue(partHeaders, 'Content-Disposition').toLowerCase();
+        if (isAttachmentPart(partType, partDisposition)) continue;
         if (partType.includes('text/plain')) {
           const text = parseMimeEntity(part, depth + 1);
           if (isMeaningfulMailText(text)) plainParts.push(text);
@@ -818,6 +897,8 @@ function parseMimeEntity(entityText, depth = 0) {
       for (const part of parts) {
         const partHeaders = splitHeadersAndBody(part).headers;
         const partType = getHeaderValue(partHeaders, 'Content-Type').toLowerCase();
+        const partDisposition = getHeaderValue(partHeaders, 'Content-Disposition').toLowerCase();
+        if (isAttachmentPart(partType, partDisposition)) continue;
         if (partType.includes('text/html')) {
           const text = parseMimeEntity(part, depth + 1);
           if (isMeaningfulMailText(text)) htmlParts.push(text);
@@ -829,6 +910,10 @@ function parseMimeEntity(entityText, depth = 0) {
       }
 
       for (const part of parts) {
+        const partHeaders = splitHeadersAndBody(part).headers;
+        const partType = getHeaderValue(partHeaders, 'Content-Type').toLowerCase();
+        const partDisposition = getHeaderValue(partHeaders, 'Content-Disposition').toLowerCase();
+        if (isAttachmentPart(partType, partDisposition)) continue;
         const text = parseMimeEntity(part, depth + 1);
         if (isMeaningfulMailText(text)) return cleanupText(text);
       }
@@ -836,6 +921,86 @@ function parseMimeEntity(entityText, depth = 0) {
   }
 
   return decodeLeafBody(headers, body, contentType);
+}
+
+function isAttachmentPart(contentType, contentDisposition) {
+  const type = String(contentType || '').toLowerCase();
+  const disposition = String(contentDisposition || '').toLowerCase();
+  if (disposition.includes('attachment')) return true;
+  if (disposition.includes('filename=')) return true;
+  if (type.includes('name=')) return true;
+  if (type.includes('application/pdf')) return true;
+  if (!type) return false;
+  return !type.includes('text/plain') && !type.includes('text/html') && !type.includes('multipart/');
+}
+
+function looksLikeBase64Pdf(text) {
+  const compact = String(text || '').replace(/\s+/g, '');
+  return compact.startsWith('JVBERi0') || compact.startsWith('JVBER');
+}
+
+function normalizeAttachmentFilename(filename, contentType, content, index) {
+  const name = sanitizeFileName(filename || '');
+  const detectedExt = detectAttachmentExt(contentType, content);
+  if (!name) return defaultAttachmentName(contentType, content, index);
+  const currentExt = path.posix.extname(name);
+  if (!currentExt && detectedExt) return `${name}${detectedExt}`;
+  if (currentExt.toLowerCase() === '.bin' && detectedExt) return `${name.slice(0, -4)}${detectedExt}`;
+  return name;
+}
+
+function detectAttachmentExt(contentType, content) {
+  const type = String(contentType || '').toLowerCase();
+  if (type.includes('pdf') || bufferStartsWith(content, '%PDF')) return '.pdf';
+  if (type.includes('png') || bufferStartsWithBytes(content, [0x89, 0x50, 0x4e, 0x47])) return '.png';
+  if (type.includes('jpeg') || type.includes('jpg') || bufferStartsWithBytes(content, [0xff, 0xd8, 0xff])) return '.jpg';
+  if (type.includes('gif') || bufferStartsWith(content, 'GIF8')) return '.gif';
+  return '';
+}
+
+function bufferStartsWith(buffer, text) {
+  if (!buffer || buffer.length < text.length) return false;
+  return buffer.subarray(0, text.length).toString('latin1') === text;
+}
+
+function bufferStartsWithBytes(buffer, bytes) {
+  if (!buffer || buffer.length < bytes.length) return false;
+  return bytes.every((byte, index) => buffer[index] === byte);
+}
+
+function extractAttachmentFilename(headers, contentType, contentDisposition) {
+  const raw = [
+    extractHeaderParam(contentDisposition, 'filename'),
+    extractHeaderParam(contentDisposition, 'filename*'),
+    extractHeaderParam(contentType, 'name'),
+    extractHeaderParam(contentType, 'name*')
+  ].find(Boolean);
+  return sanitizeFileName(decodeMimeWords(decodeRfc2231Value(raw || '')) || '');
+}
+
+function extractHeaderParam(headerValue, paramName) {
+  const escaped = paramName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const quoted = new RegExp(`${escaped}\\s*=\\s*"([^"]+)"`, 'i').exec(String(headerValue || ''));
+  if (quoted) return quoted[1];
+  const unquoted = new RegExp(`${escaped}\\s*=\\s*([^;\\s]+)`, 'i').exec(String(headerValue || ''));
+  return unquoted?.[1] || '';
+}
+
+function decodeRfc2231Value(value) {
+  const text = String(value || '').trim();
+  const match = text.match(/^([^']*)''(.+)$/);
+  const encoded = match ? match[2] : text;
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    return encoded;
+  }
+}
+
+function defaultAttachmentName(contentType, content, index) {
+  const ext = detectAttachmentExt(contentType, content);
+  if (ext) return `附件${index}${ext}`;
+  return `附件${index}.bin`;
 }
 
 function splitHeadersAndBody(text) {
@@ -938,6 +1103,8 @@ function isMeaningfulMailText(text) {
   const value = cleanupText(text);
   if (!value) return false;
   if (/^This is a multi-part message in MIME format\.?$/i.test(value)) return false;
+  if (looksLikeBase64Pdf(value)) return false;
+  if (/^%PDF-\d+\.\d+/.test(value)) return false;
   return true;
 }
 
@@ -1050,6 +1217,20 @@ function resolveAccountOutputFolder(account, settings, readState = '') {
   return `${root}/${sanitizeFileName(accountShort || account.name || '邮箱')}/${stateFolder}`;
 }
 
+function resolveSenderOutputFolder(baseFolder, from) {
+  const senderEmail = extractEmailAddress(from).toLowerCase();
+  const senderName = extractSenderName(from);
+  const senderFolderName = buildSenderFolderName(senderName, senderEmail);
+  return `${baseFolder}/${senderFolderName}`;
+}
+
+function buildSenderFolderName(senderName, senderEmail) {
+  const name = sanitizeFileName(sanitizeTitle(senderName || '未知发件人'));
+  const email = sanitizeFileName(String(senderEmail || '未知邮箱').toLowerCase());
+  if (!name || name === email) return email;
+  return `${name} ${email}`.slice(0, 160);
+}
+
 function normalizeDate(dateString) {
   const date = new Date(dateString || Date.now());
   if (Number.isNaN(date.getTime())) return new Date().toISOString().slice(0, 10);
@@ -1088,7 +1269,7 @@ function summarizeText(text, maxLength) {
   return compact.length > maxLength ? compact.slice(0, maxLength) + '…' : compact;
 }
 
-function buildNoteContent({ account, email, date, bodyText, category }) {
+function buildNoteContent({ account, email, date, bodyText, attachmentLinks, category }) {
   const lines = [
     '---',
     'type: email-note',
@@ -1112,6 +1293,11 @@ function buildNoteContent({ account, email, date, bodyText, category }) {
     `- 发件人：${email.from || ''}`,
     `- 日期：${email.date || date}`,
     `- 来源：${account.name}`,
+    '',
+    '## 附件',
+    ...(attachmentLinks && attachmentLinks.length
+      ? attachmentLinks.map((attachment) => `- [[${attachment.path}|${attachment.name}]]`)
+      : ['- 无']),
     '',
     '## 待办',
     '- [ ] ',

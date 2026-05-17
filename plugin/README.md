@@ -11,6 +11,8 @@ A local Obsidian plugin that imports email from Gmail and QQ Mail via IMAP and w
 - Auto-create a standard folder structure for email capture
 - Support per-account output folders
 - Run sync directly inside Obsidian
+- Save PDF/image attachments and link them from the generated note
+- Organize imported mail by sender name and sender email
 
 ## Current scope
 This is an MVP-first plugin focused on making the import workflow usable:
@@ -19,7 +21,7 @@ This is an MVP-first plugin focused on making the import workflow usable:
 - pull messages
 - save them as Markdown
 
-Advanced MIME parsing, attachment handling, AI summarization, and smart classification can be added later.
+The plugin includes MIME text cleanup, attachment export, sender-based folders, filtering, and automatic duplicate prevention. AI summarization and deeper classification can be added later.
 
 ## Installation
 1. Put the plugin folder into your Obsidian plugins directory.
@@ -90,6 +92,13 @@ Default subfolders:
 ```
 
 You can also customize the root folder and assign different output folders to Gmail and QQ Mail.
+
+Imported messages are grouped under each account by read state and sender:
+
+```text
+个人笔记/邮件入库/40933085QQ邮箱/未读邮件/发件人姓名 发件邮箱/邮件.md
+个人笔记/邮件入库/40933085QQ邮箱/未读邮件/发件人姓名 发件邮箱/附件/邮件标题/附件.pdf
+```
 
 ## License
 This project is licensed under the **Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International** license.

@@ -1,5 +1,15 @@
 # Release Notes
 
+## v0.1.3
+- Changed sync batching to keep scanning from newest to older messages until the configured number of actual imports is reached.
+- Added attachment extraction and vault saving for PDF/image/binary email attachments.
+- Added attachment links in generated email notes.
+- Fixed PDF/base64 attachment data being written into note summaries and original excerpts.
+- Added file signature detection so PDF attachments are saved with `.pdf` instead of `.bin`.
+- Changed imported mail organization to per-sender folders: read/unread → sender name + sender email.
+- Kept attachments under the same sender folder as their source email.
+- Cleaned previously imported sender/domain folders and documented the cleanup workflow.
+
 ## v0.1.2
 - Added per-account read mail sync option and separate read/unread subfolders under each account output folder.
 - Added whitelist/blacklist/subject keyword filtering with whitelist priority over blacklist and subject keywords.
