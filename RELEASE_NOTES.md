@@ -1,6 +1,7 @@
 # Release Notes
 
 ## v0.1.2
+- Added per-account read mail sync option and separate read/unread subfolders under each account output folder.
 - Added whitelist/blacklist/subject keyword filtering with whitelist priority over blacklist and subject keywords.
 - Fixed plugin initialization failure when auto sync is enabled on startup.
 - Fixed `Folder already exists` startup warning when standard folders already exist.
@@ -32,6 +33,7 @@
 - Duplicate prevention using `Message-ID`
 - Beginner-friendly documentation
 - CC BY-NC-SA 4.0 license notes added
+
 
 
 
