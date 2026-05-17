@@ -7,7 +7,7 @@ const DEFAULT_SETTINGS = {
   outputFolder: '个人笔记/邮件入库/待整理',
   standardRootFolder: '个人笔记/邮件入库',
   autoCreateStandardFolders: true,
-  filenameTemplate: '{subject} {date} {accountShort}',
+  filenameTemplate: '{subject} {date}',
   defaultCategory: '待整理',
   summaryLength: 500,
   accounts: [

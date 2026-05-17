@@ -1,6 +1,7 @@
 # Release Notes
 
 ## v0.1.1
+- Changed default filename layout to subject/date; account identity can be represented by the output folder name.
 - Added {accountShort} filename token and changed default filename layout to subject/date/accountShort for cleaner file lists.
 - Moved ribbon sync action lower and highlighted it for easier one-click access.
 - Added an editor toolbar compatible sync command for Obsidian mobile/quick toolbars.
@@ -22,6 +23,7 @@
 - Duplicate prevention using `Message-ID`
 - Beginner-friendly documentation
 - CC BY-NC-SA 4.0 license notes added
+
 
 
 
