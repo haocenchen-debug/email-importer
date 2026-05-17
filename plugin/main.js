@@ -102,7 +102,7 @@ class ImapClient {
 
   async fetchFull(seq) {
     const tag = this._nextTag();
-    const command = `${tag} FETCH ${seq} (BODY.PEEK[HEADER.FIELDS (MESSAGE-ID SUBJECT FROM DATE)] BODY.PEEK[TEXT])\r\n`;
+    const command = `${tag} FETCH ${seq} (BODY.PEEK[])\r\n`;
     return await this._collectFetch(tag, command);
   }
 
@@ -485,16 +485,14 @@ function sleep(ms) {
 }
 
 function parseFetchResponse(lines) {
-  const joined = lines.join('\n');
-  const subject = matchHeader(joined, 'Subject');
-  const from = matchHeader(joined, 'From');
-  const date = matchHeader(joined, 'Date');
-  const messageId = matchHeader(joined, 'Message-ID');
-  const bodyStart = joined.lastIndexOf(')');
-  const rawBody = bodyStart >= 0 ? joined.slice(bodyStart + 1) : joined;
+  const rawEmail = extractFirstFetchLiteral(lines) || lines.join('\n');
+  const subject = matchHeader(rawEmail, 'Subject');
+  const from = matchHeader(rawEmail, 'From');
+  const date = matchHeader(rawEmail, 'Date');
+  const messageId = matchHeader(rawEmail, 'Message-ID');
   const decodedSubject = decodeMimeWords(subject || '');
   const decodedFrom = decodeMimeWords(from || '');
-  const bodyText = extractReadableText(rawBody);
+  const bodyText = extractReadableText(rawEmail);
   return {
     subject: decodedSubject || '无主题邮件',
     from: decodedFrom || '',
@@ -502,6 +500,28 @@ function parseFetchResponse(lines) {
     messageId: (messageId || '').trim(),
     bodyText
   };
+}
+
+function extractFirstFetchLiteral(lines) {
+  const collected = [];
+  let collecting = false;
+
+  for (const line of lines) {
+    if (!collecting) {
+      if (/\{\d+\}$/.test(line)) {
+        collecting = true;
+      }
+      continue;
+    }
+
+    if (line === ')' || /^\S+\s+OK\b/i.test(line)) {
+      break;
+    }
+
+    collected.push(line);
+  }
+
+  return collected.join('\n').trim();
 }
 
 function matchHeader(text, header) {
