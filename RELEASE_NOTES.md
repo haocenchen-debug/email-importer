@@ -1,6 +1,7 @@
 # Release Notes
 
 ## v0.1.1
+- Moved ribbon sync action lower and highlighted it for easier one-click access.
 - Added an editor toolbar compatible sync command for Obsidian mobile/quick toolbars.
 - Added prominent sync entry points in the ribbon and at the top of settings; trimmed leftover HTML tails from imported text.
 - Strip leftover MIME boundaries and part headers from final imported text output.
@@ -20,6 +21,7 @@
 - Duplicate prevention using `Message-ID`
 - Beginner-friendly documentation
 - CC BY-NC-SA 4.0 license notes added
+
 
 
 

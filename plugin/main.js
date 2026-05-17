@@ -194,9 +194,10 @@ module.exports = class EmailImporterPlugin extends Plugin {
       }
     });
 
-    this.addRibbonIcon('mail', '同步 Gmail / QQ 邮件', async () => {
+    const ribbonIconEl = this.addRibbonIcon('mail-check', '同步 Gmail / QQ 邮件', async () => {
       await this.syncAllAccounts();
     });
+    ribbonIconEl.addClass('email-importer-sync-ribbon-icon');
 
     this.addSettingTab(new EmailImporterSettingTab(this.app, this));
 

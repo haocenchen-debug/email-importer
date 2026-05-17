@@ -9,3 +9,9 @@
   margin-top: 0;
   margin-bottom: 12px;
 }
+
+.workspace-ribbon .email-importer-sync-ribbon-icon {
+  order: 999;
+  margin-top: 12px;
+  color: var(--interactive-accent);
+}
