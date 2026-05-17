@@ -7,7 +7,7 @@ const DEFAULT_SETTINGS = {
   outputFolder: '个人笔记/邮件入库/待整理',
   standardRootFolder: '个人笔记/邮件入库',
   autoCreateStandardFolders: true,
-  filenameTemplate: '{date} {account} {subject}',
+  filenameTemplate: '{subject} {date} {accountShort}',
   defaultCategory: '待整理',
   summaryLength: 500,
   accounts: [
@@ -302,6 +302,7 @@ module.exports = class EmailImporterPlugin extends Plugin {
     const fileName = sanitizeFileName(renderFilename(this.settings.filenameTemplate, {
       date,
       account: account.name,
+      accountShort: shortAccountName(account.name),
       subject
     })) + '.md';
     const filePath = uniquePath(this.app, path.posix.join(folder, fileName));
@@ -829,6 +830,10 @@ function sanitizeFileName(value) {
 
 function renderFilename(template, vars) {
   return String(template || '{date} {subject}').replace(/\{(\w+)\}/g, (_, key) => vars[key] || '');
+}
+
+function shortAccountName(accountName) {
+  return String(accountName || '').split('@')[0] || String(accountName || '');
 }
 
 function uniquePath(app, filePath) {
