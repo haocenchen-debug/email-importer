@@ -1,6 +1,7 @@
 # Release Notes
 
 ## v0.1.1
+- Fixed initialization warning when standard folders already exist.
 - Fixed auto sync initialization compatibility by avoiding direct window.setInterval usage during plugin startup.
 - Added optional automatic polling sync with user-configurable minute interval and ribbon icon states for syncing/new mail/errors.
 - Added automatic per-account output folders when account outputFolder is blank, e.g. QQ number + QQ邮箱 and Gmail username + Gmail.
@@ -26,6 +27,7 @@
 - Duplicate prevention using `Message-ID`
 - Beginner-friendly documentation
 - CC BY-NC-SA 4.0 license notes added
+
 
 
 

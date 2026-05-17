@@ -857,14 +857,15 @@ async function ensureFolder(app, folderPath) {
   let current = '';
   for (const part of parts) {
     current = current ? `${current}/${part}` : part;
-    if (!app.vault.getAbstractFileByPath(current)) {
-      try {
-        await app.vault.createFolder(current);
-      } catch (error) {
-        if (!app.vault.getAbstractFileByPath(current)) {
-          throw error;
-        }
-      }
+    const existing = app.vault.getAbstractFileByPath(current);
+    if (existing) continue;
+
+    try {
+      await app.vault.createFolder(current);
+    } catch (error) {
+      const existsAfterRace = app.vault.getAbstractFileByPath(current);
+      const alreadyExists = /already exists/i.test(String(error?.message || error));
+      if (!existsAfterRace && !alreadyExists) throw error;
     }
   }
 }
