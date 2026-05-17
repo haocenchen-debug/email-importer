@@ -186,6 +186,14 @@ module.exports = class EmailImporterPlugin extends Plugin {
       }
     });
 
+    this.addCommand({
+      id: 'sync-email-to-vault-editor-toolbar',
+      name: '同步邮件到知识库',
+      editorCallback: async () => {
+        await this.syncAllAccounts();
+      }
+    });
+
     this.addRibbonIcon('mail', '同步 Gmail / QQ 邮件', async () => {
       await this.syncAllAccounts();
     });

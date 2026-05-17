@@ -1,6 +1,7 @@
 # Release Notes
 
 ## v0.1.1
+- Added an editor toolbar compatible sync command for Obsidian mobile/quick toolbars.
 - Added prominent sync entry points in the ribbon and at the top of settings; trimmed leftover HTML tails from imported text.
 - Strip leftover MIME boundaries and part headers from final imported text output.
 - Added broader charset decoding for GBK/GB18030/GB2312/Big5 and filtered multipart placeholder text.
@@ -19,6 +20,7 @@
 - Duplicate prevention using `Message-ID`
 - Beginner-friendly documentation
 - CC BY-NC-SA 4.0 license notes added
+
 
 
 
