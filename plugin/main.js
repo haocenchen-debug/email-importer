@@ -1,6 +1,7 @@
 const { Plugin, Notice, PluginSettingTab, Setting } = require('obsidian');
 const tls = require('tls');
 const path = require('path');
+const { TextDecoder } = require('util');
 
 const DEFAULT_SETTINGS = {
   outputFolder: '个人笔记/邮件入库/待整理',
@@ -540,10 +541,7 @@ function decodeMimeWords(input) {
         const qp = data.replace(/_/g, ' ').replace(/=([A-Fa-f0-9]{2})/g, (m, hex) => String.fromCharCode(parseInt(hex, 16)));
         buffer = Buffer.from(qp, 'binary');
       }
-      const normalized = String(charset).toLowerCase();
-      if (normalized.includes('utf-8') || normalized.includes('us-ascii')) return buffer.toString('utf8');
-      if (normalized.includes('gb') || normalized.includes('gbk') || normalized.includes('gb2312')) return buffer.toString('utf8');
-      return buffer.toString('utf8');
+      return decodeBufferWithCharset(buffer, charset);
     } catch (_) {
       return data;
     }
@@ -560,7 +558,7 @@ function parseMimeEntity(entityText) {
   const contentType = getHeaderValue(headers, 'Content-Type').toLowerCase();
 
   if (contentType.includes('multipart/')) {
-    const boundary = extractBoundary(headers);
+    const boundary = extractBoundary(contentType);
     if (boundary) {
       const parts = splitMimeParts(body, boundary);
       const plainParts = [];
@@ -571,7 +569,7 @@ function parseMimeEntity(entityText) {
         const partType = getHeaderValue(partHeaders, 'Content-Type').toLowerCase();
         if (partType.includes('text/plain')) {
           const text = parseMimeEntity(part);
-          if (text) plainParts.push(text);
+          if (isMeaningfulMailText(text)) plainParts.push(text);
         }
       }
 
@@ -584,7 +582,7 @@ function parseMimeEntity(entityText) {
         const partType = getHeaderValue(partHeaders, 'Content-Type').toLowerCase();
         if (partType.includes('text/html')) {
           const text = parseMimeEntity(part);
-          if (text) htmlParts.push(text);
+          if (isMeaningfulMailText(text)) htmlParts.push(text);
         }
       }
 
@@ -594,7 +592,7 @@ function parseMimeEntity(entityText) {
 
       for (const part of parts) {
         const text = parseMimeEntity(part);
-        if (text) return cleanupText(text);
+        if (isMeaningfulMailText(text)) return cleanupText(text);
       }
     }
   }
@@ -654,23 +652,54 @@ function decodeTransferEncodingToBuffer(bodyText, transferEncoding) {
   return Buffer.from(body, 'utf8');
 }
 
+function decodeLooseQuotedPrintableText(text) {
+  const value = String(text || '');
+  if (!/=([A-Fa-f0-9]{2})/.test(value) && !/=3D/.test(value)) return value;
+  try {
+    return Buffer.from(
+      value
+        .replace(/=\r?\n/g, '')
+        .replace(/=([A-Fa-f0-9]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16))),
+      'binary'
+    ).toString('utf8');
+  } catch (_) {
+    return value;
+  }
+}
+
 function decodeBufferWithCharset(buffer, charset) {
   try {
-    const normalized = String(charset || 'utf-8').toLowerCase();
-    if (normalized.includes('utf-8') || normalized.includes('utf8') || normalized.includes('us-ascii')) {
-      return buffer.toString('utf8');
-    }
-    if (normalized.includes('iso-8859-1') || normalized.includes('latin1')) {
-      return buffer.toString('latin1');
-    }
-    return buffer.toString('utf8');
+    const normalized = normalizeCharset(charset);
+    if (normalized === 'utf-8' || normalized === 'us-ascii') return buffer.toString('utf8');
+    if (normalized === 'latin1') return buffer.toString('latin1');
+    return new TextDecoder(normalized, { fatal: false }).decode(buffer);
   } catch (_) {
     return buffer.toString('utf8');
   }
 }
 
+function normalizeCharset(charset) {
+  const normalized = String(charset || 'utf-8').trim().toLowerCase();
+  if (!normalized) return 'utf-8';
+  if (normalized.includes('utf-8') || normalized.includes('utf8')) return 'utf-8';
+  if (normalized.includes('us-ascii') || normalized === 'ascii') return 'us-ascii';
+  if (normalized.includes('gb18030')) return 'gb18030';
+  if (normalized.includes('gbk')) return 'gbk';
+  if (normalized.includes('gb2312') || normalized.includes('gb_2312')) return 'gb18030';
+  if (normalized.includes('big5')) return 'big5';
+  if (normalized.includes('iso-8859-1') || normalized.includes('latin1')) return 'latin1';
+  return normalized.replace(/["']/g, '');
+}
+
+function isMeaningfulMailText(text) {
+  const value = cleanupText(text);
+  if (!value) return false;
+  if (/^This is a multi-part message in MIME format\.?$/i.test(value)) return false;
+  return true;
+}
+
 function cleanupText(text) {
-  return decodeHtmlEntities(String(text || ''))
+  return decodeHtmlEntities(decodeLooseQuotedPrintableText(String(text || '')))
     .replace(/\0/g, '')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
