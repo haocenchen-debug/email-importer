@@ -551,58 +551,155 @@ function decodeMimeWords(input) {
 }
 
 function extractReadableText(rawBody) {
-  const normalized = rawBody.replace(/\r/g, '');
-  const contentType = /Content-Type:\s*([^;\n]+)/i.exec(normalized)?.[1]?.toLowerCase() || '';
+  return parseMimeEntity(rawBody) || '';
+}
+
+function parseMimeEntity(entityText) {
+  const normalized = String(entityText || '').replace(/\r/g, '');
+  const { headers, body } = splitHeadersAndBody(normalized);
+  const contentType = getHeaderValue(headers, 'Content-Type').toLowerCase();
+
   if (contentType.includes('multipart/')) {
-    const boundary = /boundary="?([^"\n;]+)"?/i.exec(normalized)?.[1];
+    const boundary = extractBoundary(headers);
     if (boundary) {
-      const parts = normalized.split(`--${boundary}`);
+      const parts = splitMimeParts(body, boundary);
+      const plainParts = [];
+      const htmlParts = [];
+
       for (const part of parts) {
-        if (/Content-Type:\s*text\/plain/i.test(part)) {
-          return decodePartBody(part);
+        const partHeaders = splitHeadersAndBody(part).headers;
+        const partType = getHeaderValue(partHeaders, 'Content-Type').toLowerCase();
+        if (partType.includes('text/plain')) {
+          const text = parseMimeEntity(part);
+          if (text) plainParts.push(text);
         }
       }
+
+      if (plainParts.length) {
+        return cleanupText(plainParts.join('\n\n'));
+      }
+
       for (const part of parts) {
-        if (/Content-Type:\s*text\/html/i.test(part)) {
-          return htmlToText(decodePartBody(part));
+        const partHeaders = splitHeadersAndBody(part).headers;
+        const partType = getHeaderValue(partHeaders, 'Content-Type').toLowerCase();
+        if (partType.includes('text/html')) {
+          const text = parseMimeEntity(part);
+          if (text) htmlParts.push(text);
         }
+      }
+
+      if (htmlParts.length) {
+        return cleanupText(htmlParts.join('\n\n'));
+      }
+
+      for (const part of parts) {
+        const text = parseMimeEntity(part);
+        if (text) return cleanupText(text);
       }
     }
   }
-  if (contentType.includes('text/html')) {
-    return htmlToText(decodePartBody(normalized));
-  }
-  return decodePartBody(normalized);
+
+  return decodeLeafBody(headers, body, contentType);
 }
 
-function decodePartBody(part) {
-  const splitIndex = part.indexOf('\n\n');
-  const headerText = splitIndex >= 0 ? part.slice(0, splitIndex) : '';
-  let body = splitIndex >= 0 ? part.slice(splitIndex + 2).trim() : part.trim();
-  const transferEncoding = /Content-Transfer-Encoding:\s*([^\n]+)/i.exec(headerText)?.[1]?.trim().toLowerCase();
-
-  if (transferEncoding === 'base64') {
-    body = Buffer.from(body.replace(/\s+/g, ''), 'base64').toString('utf8');
-  } else if (transferEncoding === 'quoted-printable') {
-    body = body
-      .replace(/=\n/g, '')
-      .replace(/=([A-Fa-f0-9]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+function splitHeadersAndBody(text) {
+  const splitIndex = text.indexOf('\n\n');
+  if (splitIndex === -1) {
+    return { headers: '', body: text.trim() };
   }
+  return {
+    headers: text.slice(0, splitIndex),
+    body: text.slice(splitIndex + 2)
+  };
+}
 
-  return body.replace(/\0/g, '').trim();
+function getHeaderValue(headerText, headerName) {
+  const regex = new RegExp(`^${headerName}:\\s*([\\s\\S]*?)(?=\\n[^\\s]|$)`, 'im');
+  const match = String(headerText || '').match(regex);
+  return decodeMimeWords((match?.[1] || '').replace(/\n[ \t]+/g, ' ').trim());
+}
+
+function extractBoundary(headerText) {
+  return /boundary="?([^"\n;]+)"?/i.exec(String(headerText || ''))?.[1] || '';
+}
+
+function splitMimeParts(bodyText, boundary) {
+  const marker = `--${boundary}`;
+  return String(bodyText || '')
+    .split(marker)
+    .map((part) => part.replace(/^\n+|\n+$/g, ''))
+    .filter((part) => part && part !== '--' && !part.startsWith('--'));
+}
+
+function decodeLeafBody(headerText, bodyText, contentType) {
+  const charset = /charset="?([^"\n;]+)"?/i.exec(String(headerText || ''))?.[1] || 'utf-8';
+  const transferEncoding = getHeaderValue(headerText, 'Content-Transfer-Encoding').toLowerCase();
+  const buffer = decodeTransferEncodingToBuffer(bodyText, transferEncoding);
+  const decoded = decodeBufferWithCharset(buffer, charset);
+  const cleaned = contentType.includes('text/html') ? htmlToText(decoded) : decoded;
+  return cleanupText(cleaned);
+}
+
+function decodeTransferEncodingToBuffer(bodyText, transferEncoding) {
+  const body = String(bodyText || '');
+  if (transferEncoding === 'base64') {
+    return Buffer.from(body.replace(/\s+/g, ''), 'base64');
+  }
+  if (transferEncoding === 'quoted-printable') {
+    const binary = body
+      .replace(/=\r?\n/g, '')
+      .replace(/=([A-Fa-f0-9]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+    return Buffer.from(binary, 'binary');
+  }
+  return Buffer.from(body, 'utf8');
+}
+
+function decodeBufferWithCharset(buffer, charset) {
+  try {
+    const normalized = String(charset || 'utf-8').toLowerCase();
+    if (normalized.includes('utf-8') || normalized.includes('utf8') || normalized.includes('us-ascii')) {
+      return buffer.toString('utf8');
+    }
+    if (normalized.includes('iso-8859-1') || normalized.includes('latin1')) {
+      return buffer.toString('latin1');
+    }
+    return buffer.toString('utf8');
+  } catch (_) {
+    return buffer.toString('utf8');
+  }
+}
+
+function cleanupText(text) {
+  return decodeHtmlEntities(String(text || ''))
+    .replace(/\0/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+function decodeHtmlEntities(text) {
+  return String(text || '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(Number(dec)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
 }
 
 function htmlToText(html) {
-  return html
+  return decodeHtmlEntities(String(html || ''))
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/p>/gi, '\n\n')
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<li[^>]*>/gi, '- ')
     .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/[ \t]{2,}/g, ' ')
     .trim();

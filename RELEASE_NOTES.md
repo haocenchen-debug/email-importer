@@ -1,6 +1,7 @@
 # Release Notes
 
 ## v0.1.1
+- Improved MIME decoding for multipart emails, quoted-printable bodies, base64 bodies, and HTML-to-text fallback.
 - Fixed IMAP `FETCH` parsing bug where imported email body could become `A00xx OK FETCH Completed`.
 - Changed full email retrieval to `BODY.PEEK[]` so headers and body are parsed from the same raw message.
 - Added extraction of the first IMAP literal block before parsing message headers and readable body text.
@@ -15,4 +16,5 @@
 - Duplicate prevention using `Message-ID`
 - Beginner-friendly documentation
 - CC BY-NC-SA 4.0 license notes added
+
 
