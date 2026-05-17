@@ -20,7 +20,7 @@ const DEFAULT_SETTINGS = {
       username: '',
       password: '',
       folder: 'INBOX',
-      outputFolder: '个人笔记/邮件入库/Gmail',
+      outputFolder: '',
       search: 'UNSEEN',
       maxEmails: 10,
       markSeen: false
@@ -34,7 +34,7 @@ const DEFAULT_SETTINGS = {
       username: '',
       password: '',
       folder: 'INBOX',
-      outputFolder: '个人笔记/邮件入库/QQ邮箱',
+      outputFolder: '',
       search: 'UNSEEN',
       maxEmails: 10,
       markSeen: false
@@ -294,7 +294,7 @@ module.exports = class EmailImporterPlugin extends Plugin {
   }
 
   async writeEmailNote(account, email) {
-    const folder = normalizeFolder(account.outputFolder || this.settings.outputFolder);
+    const folder = resolveAccountOutputFolder(account, this.settings);
     await ensureFolder(this.app, folder);
 
     const date = normalizeDate(email.date);
@@ -431,7 +431,7 @@ class EmailImporterSettingTab extends PluginSettingTab {
       addTextSetting(this.plugin, section, '用户名', '邮箱地址', account.username, async (value) => account.username = value.trim());
       addTextSetting(this.plugin, section, '密码 / 授权码', 'Gmail App Password / QQ 授权码', account.password, async (value) => account.password = value, true);
       addTextSetting(this.plugin, section, '文件夹', 'INBOX', account.folder || 'INBOX', async (value) => account.folder = value.trim() || 'INBOX');
-      addTextSetting(this.plugin, section, '邮箱专属输出目录', '例如 个人笔记/邮件入库/Gmail', account.outputFolder || '', async (value) => account.outputFolder = value.trim());
+      addTextSetting(this.plugin, section, '邮箱专属输出目录', '可留空。留空时自动使用：QQ号QQ邮箱 / 用户名Gmail', account.outputFolder || '', async (value) => account.outputFolder = value.trim());
       addTextSetting(this.plugin, section, '搜索条件', '例如 UNSEEN / ALL', account.search || 'UNSEEN', async (value) => account.search = value.trim() || 'UNSEEN');
       addTextSetting(this.plugin, section, '每次最多导入', '10', String(account.maxEmails || 10), async (value) => account.maxEmails = Number(value) || 10);
 
@@ -812,6 +812,27 @@ async function createStandardFolders(app, rootFolder) {
 
 function normalizeFolder(folder) {
   return String(folder || '').replace(/^\/+|\/+$/g, '') || DEFAULT_SETTINGS.outputFolder;
+}
+
+function resolveAccountOutputFolder(account, settings) {
+  if (account.outputFolder && account.outputFolder.trim()) {
+    return normalizeFolder(account.outputFolder);
+  }
+
+  const root = normalizeFolder(settings.standardRootFolder || DEFAULT_SETTINGS.standardRootFolder);
+  const username = String(account.username || account.name || account.id || '').trim();
+  const accountShort = shortAccountName(username);
+  const host = String(account.host || '').toLowerCase();
+
+  if (account.id === 'qq' || host.includes('qq.com') || username.endsWith('@qq.com')) {
+    return `${root}/${sanitizeFileName(accountShort || 'QQ')}QQ邮箱`;
+  }
+
+  if (account.id === 'gmail' || host.includes('gmail.com') || username.endsWith('@gmail.com')) {
+    return `${root}/${sanitizeFileName(accountShort || 'Gmail')}Gmail`;
+  }
+
+  return `${root}/${sanitizeFileName(accountShort || account.name || '邮箱')}`;
 }
 
 function normalizeDate(dateString) {
