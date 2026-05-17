@@ -12,6 +12,10 @@ const DEFAULT_SETTINGS = {
   summaryLength: 500,
   autoSyncEnabled: false,
   autoSyncIntervalMinutes: 10,
+  filterEnabled: false,
+  whitelistEmails: '',
+  blacklistEmails: '',
+  subjectKeywords: '',
   accounts: [
     {
       id: 'gmail',
@@ -222,6 +226,10 @@ module.exports = class EmailImporterPlugin extends Plugin {
     this.settings.importedMessageIds = this.settings.importedMessageIds || {};
     this.settings.autoSyncEnabled = !!this.settings.autoSyncEnabled;
     this.settings.autoSyncIntervalMinutes = normalizeAutoSyncInterval(this.settings.autoSyncIntervalMinutes);
+    this.settings.filterEnabled = !!this.settings.filterEnabled;
+    this.settings.whitelistEmails = this.settings.whitelistEmails || '';
+    this.settings.blacklistEmails = this.settings.blacklistEmails || '';
+    this.settings.subjectKeywords = this.settings.subjectKeywords || '';
   }
 
   async saveSettings() {
@@ -271,11 +279,14 @@ module.exports = class EmailImporterPlugin extends Plugin {
     this.clearRibbonState('has-error');
     if (!options.silent) new Notice(`Email Importer: 开始同步 ${enabledAccounts.length} 个邮箱...`);
     let imported = 0;
+    let skipped = 0;
     let failed = false;
 
     for (const account of enabledAccounts) {
       try {
-        imported += await this.syncAccount(account);
+        const result = await this.syncAccount(account);
+        imported += result.imported;
+        skipped += result.skipped;
       } catch (error) {
         failed = true;
         console.error('Email Importer sync failed', account.name, error);
@@ -288,8 +299,8 @@ module.exports = class EmailImporterPlugin extends Plugin {
     this.setRibbonState('is-syncing', false);
     this.setRibbonState('has-error', failed);
     if (imported > 0) this.setRibbonState('has-new-mail', true);
-    if (!options.silent) new Notice(`Email Importer: 同步完成，共导入 ${imported} 封邮件`);
-    if (options.silent && imported > 0) new Notice(`Email Importer: 自动同步导入 ${imported} 封新邮件`);
+    if (!options.silent) new Notice(`Email Importer: 同步完成，导入 ${imported} 封，过滤 ${skipped} 封`);
+    if (options.silent && imported > 0) new Notice(`Email Importer: 自动同步导入 ${imported} 封新邮件，过滤 ${skipped} 封`);
     return imported;
   }
 
@@ -313,6 +324,7 @@ module.exports = class EmailImporterPlugin extends Plugin {
     validateAccount(account);
     const client = new ImapClient(account);
     let imported = 0;
+    let skipped = 0;
     try {
       await client.connect();
       const seqs = await client.search(account.search || 'UNSEEN');
@@ -322,6 +334,18 @@ module.exports = class EmailImporterPlugin extends Plugin {
         const email = parseFetchResponse(fetched.lines);
         const messageIdKey = email.messageId || `${account.id}:${seq}:${email.subject}`;
         if (this.settings.importedMessageIds[messageIdKey]) continue;
+        const filterResult = shouldSkipEmail(email, this.settings);
+        if (filterResult.skip) {
+          skipped += 1;
+          this.settings.importedMessageIds[messageIdKey] = {
+            importedAt: new Date().toISOString(),
+            account: account.name,
+            subject: email.subject || '',
+            skipped: true,
+            reason: filterResult.reason
+          };
+          continue;
+        }
         await this.writeEmailNote(account, email);
         this.settings.importedMessageIds[messageIdKey] = {
           importedAt: new Date().toISOString(),
@@ -336,7 +360,7 @@ module.exports = class EmailImporterPlugin extends Plugin {
     } finally {
       await client.close();
     }
-    return imported;
+    return { imported, skipped };
   }
 
   async writeEmailNote(account, email) {
@@ -476,6 +500,46 @@ class EmailImporterSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
+    containerEl.createEl('h3', { text: '邮件过滤' });
+    containerEl.createEl('p', { text: '优先级：白名单邮箱 > 黑名单邮箱 > 主题关键词。白名单/黑名单只匹配发件人邮箱地址，关键词只匹配主题。' });
+
+    new Setting(containerEl)
+      .setName('启用邮件过滤')
+      .setDesc('开启后按下面规则跳过不需要入库的邮件；不会删除邮箱原邮件')
+      .addToggle((toggle) => toggle
+        .setValue(!!this.plugin.settings.filterEnabled)
+        .onChange(async (value) => {
+          this.plugin.settings.filterEnabled = value;
+          await this.plugin.saveSettings();
+        }));
+
+    addTextAreaSetting(
+      this.plugin,
+      containerEl,
+      '白名单邮箱地址',
+      '一行一个。命中后直接导入，例如 noreply@github.com 或 @notify.cloudflare.com',
+      this.plugin.settings.whitelistEmails || '',
+      async (value) => this.plugin.settings.whitelistEmails = value
+    );
+
+    addTextAreaSetting(
+      this.plugin,
+      containerEl,
+      '黑名单邮箱地址',
+      '一行一个。命中后跳过导入，例如 @temu.com 或 ads@example.com',
+      this.plugin.settings.blacklistEmails || '',
+      async (value) => this.plugin.settings.blacklistEmails = value
+    );
+
+    addTextAreaSetting(
+      this.plugin,
+      containerEl,
+      '主题关键词',
+      '一行一个。只匹配邮件主题，例如 优惠 / 促销 / Hot deals',
+      this.plugin.settings.subjectKeywords || '',
+      async (value) => this.plugin.settings.subjectKeywords = value
+    );
+
     containerEl.createEl('h3', { text: '邮箱账号' });
     containerEl.createEl('p', { text: 'Gmail 请使用 App Password；QQ 邮箱请开启 IMAP 并使用授权码。' });
 
@@ -555,6 +619,21 @@ function addTextSetting(plugin, container, name, desc, value, apply, isSecret = 
     });
 }
 
+function addTextAreaSetting(plugin, container, name, desc, value, apply) {
+  new Setting(container)
+    .setName(name)
+    .setDesc(desc)
+    .addTextArea((text) => {
+      text.setPlaceholder(desc).setValue(value || '');
+      text.inputEl.rows = 5;
+      text.inputEl.cols = 40;
+      text.onChange(async (next) => {
+        await apply(next);
+        await plugin.saveSettings();
+      });
+    });
+}
+
 function mergeAccounts(accounts) {
   const byId = new Map((accounts || []).map((account) => [account.id, account]));
   return DEFAULT_SETTINGS.accounts.map((base) => Object.assign({}, base, byId.get(base.id) || {}));
@@ -572,6 +651,47 @@ function validateAccount(account) {
       throw new Error(`${account.name} 缺少 ${key} 配置`);
     }
   }
+}
+
+function shouldSkipEmail(email, settings) {
+  if (!settings.filterEnabled) return { skip: false, reason: '' };
+
+  const fromEmail = extractEmailAddress(email.from || '').toLowerCase();
+  const subject = String(email.subject || '').toLowerCase();
+  const whitelist = parseRuleLines(settings.whitelistEmails).map((item) => item.toLowerCase());
+  const blacklist = parseRuleLines(settings.blacklistEmails).map((item) => item.toLowerCase());
+  const keywords = parseRuleLines(settings.subjectKeywords).map((item) => item.toLowerCase());
+
+  const whiteRule = whitelist.find((rule) => emailRuleMatches(fromEmail, rule));
+  if (whiteRule) return { skip: false, reason: `whitelist:${whiteRule}` };
+
+  const blackRule = blacklist.find((rule) => emailRuleMatches(fromEmail, rule));
+  if (blackRule) return { skip: true, reason: `blacklist:${blackRule}` };
+
+  const keyword = keywords.find((rule) => subject.includes(rule));
+  if (keyword) return { skip: true, reason: `subject:${keyword}` };
+
+  return { skip: false, reason: '' };
+}
+
+function parseRuleLines(value) {
+  return String(value || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function extractEmailAddress(from) {
+  const angleMatch = String(from || '').match(/<([^>]+)>/);
+  if (angleMatch) return angleMatch[1].trim();
+  const emailMatch = String(from || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  return (emailMatch?.[0] || String(from || '')).trim();
+}
+
+function emailRuleMatches(email, rule) {
+  if (!email || !rule) return false;
+  if (rule.startsWith('@')) return email.endsWith(rule);
+  return email === rule;
 }
 
 function quoteString(value) {
