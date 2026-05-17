@@ -10,6 +10,8 @@ const DEFAULT_SETTINGS = {
   filenameTemplate: '{subject} {date}',
   defaultCategory: '待整理',
   summaryLength: 500,
+  autoSyncEnabled: false,
+  autoSyncIntervalMinutes: 10,
   accounts: [
     {
       id: 'gmail',
@@ -177,6 +179,8 @@ class ImapClient {
 module.exports = class EmailImporterPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
+    this.ribbonIconEl = null;
+    this.isSyncing = false;
 
     this.addCommand({
       id: 'sync-email-to-vault',
@@ -195,14 +199,17 @@ module.exports = class EmailImporterPlugin extends Plugin {
     });
 
     const ribbonIconEl = this.addRibbonIcon('mail-check', '同步 Gmail / QQ 邮件', async () => {
+      this.clearRibbonState('has-new-mail');
       await this.syncAllAccounts();
     });
+    this.ribbonIconEl = ribbonIconEl;
     ribbonIconEl.addClass('email-importer-sync-ribbon-icon');
 
     this.addSettingTab(new EmailImporterSettingTab(this.app, this));
 
     try {
       await this.ensureStandardStructureIfNeeded();
+      this.setupAutoSync();
     } catch (error) {
       console.error('Email Importer init failed', error);
       new Notice(`Email Importer 初始化异常：${error.message}`);
@@ -213,6 +220,8 @@ module.exports = class EmailImporterPlugin extends Plugin {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
     this.settings.accounts = mergeAccounts(this.settings.accounts || []);
     this.settings.importedMessageIds = this.settings.importedMessageIds || {};
+    this.settings.autoSyncEnabled = !!this.settings.autoSyncEnabled;
+    this.settings.autoSyncIntervalMinutes = normalizeAutoSyncInterval(this.settings.autoSyncIntervalMinutes);
   }
 
   async saveSettings() {
@@ -224,27 +233,60 @@ module.exports = class EmailImporterPlugin extends Plugin {
     await createStandardFolders(this.app, normalizeFolder(this.settings.standardRootFolder || DEFAULT_SETTINGS.standardRootFolder));
   }
 
-  async syncAllAccounts() {
-    const enabledAccounts = this.settings.accounts.filter((account) => account.enabled);
-    if (!enabledAccounts.length) {
-      new Notice('Email Importer: 请先在设置中启用至少一个邮箱账号');
-      return;
+  setupAutoSync() {
+    if (!this.settings.autoSyncEnabled) return;
+    const minutes = normalizeAutoSyncInterval(this.settings.autoSyncIntervalMinutes);
+    this.registerInterval(window.setInterval(() => {
+      this.syncAllAccounts({ silent: true, automatic: true });
+    }, minutes * 60 * 1000));
+  }
+
+  setRibbonState(state, enabled = true) {
+    if (!this.ribbonIconEl) return;
+    this.ribbonIconEl.toggleClass(state, enabled);
+  }
+
+  clearRibbonState(state) {
+    this.setRibbonState(state, false);
+  }
+
+  async syncAllAccounts(options = {}) {
+    if (this.isSyncing) {
+      if (!options.silent) new Notice('Email Importer: 正在同步中，请稍候');
+      return 0;
     }
 
-    new Notice(`Email Importer: 开始同步 ${enabledAccounts.length} 个邮箱...`);
+    const enabledAccounts = this.settings.accounts.filter((account) => account.enabled);
+    if (!enabledAccounts.length) {
+      if (!options.silent) new Notice('Email Importer: 请先在设置中启用至少一个邮箱账号');
+      return 0;
+    }
+
+    this.isSyncing = true;
+    this.setRibbonState('is-syncing', true);
+    this.clearRibbonState('has-error');
+    if (!options.silent) new Notice(`Email Importer: 开始同步 ${enabledAccounts.length} 个邮箱...`);
     let imported = 0;
+    let failed = false;
 
     for (const account of enabledAccounts) {
       try {
         imported += await this.syncAccount(account);
       } catch (error) {
+        failed = true;
         console.error('Email Importer sync failed', account.name, error);
-        new Notice(`同步 ${account.name} 失败：${error.message}`);
+        if (!options.silent) new Notice(`同步 ${account.name} 失败：${error.message}`);
       }
     }
 
     await this.saveSettings();
-    new Notice(`Email Importer: 同步完成，共导入 ${imported} 封邮件`);
+    this.isSyncing = false;
+    this.setRibbonState('is-syncing', false);
+    this.setRibbonState('has-error', failed);
+    if (imported > 0) this.setRibbonState('has-new-mail', true);
+    if (!options.silent) new Notice(`Email Importer: 同步完成，共导入 ${imported} 封邮件`);
+    if (options.silent && imported > 0) new Notice(`Email Importer: 自动同步导入 ${imported} 封新邮件`);
+    return imported;
   }
 
   async testAccountConnection(account) {
@@ -337,6 +379,28 @@ class EmailImporterSettingTab extends PluginSettingTab {
         .setCta()
         .onClick(async () => {
           await this.plugin.syncAllAccounts();
+        }));
+
+    new Setting(containerEl)
+      .setName('自动同步')
+      .setDesc('开启后按固定间隔自动检查新邮件；仍会使用 Message-ID 去重，避免重复导入')
+      .addToggle((toggle) => toggle
+        .setValue(!!this.plugin.settings.autoSyncEnabled)
+        .onChange(async (value) => {
+          this.plugin.settings.autoSyncEnabled = value;
+          await this.plugin.saveSettings();
+          new Notice('Email Importer: 自动同步设置已保存，重启或重载插件后生效');
+        }));
+
+    new Setting(containerEl)
+      .setName('自动同步间隔（分钟）')
+      .setDesc('例如 1、10、30。建议 10 分钟以上；设置过短可能导致邮箱服务限制')
+      .addText((text) => text
+        .setPlaceholder('10')
+        .setValue(String(this.plugin.settings.autoSyncIntervalMinutes || 10))
+        .onChange(async (value) => {
+          this.plugin.settings.autoSyncIntervalMinutes = normalizeAutoSyncInterval(value);
+          await this.plugin.saveSettings();
         }));
 
     new Setting(containerEl)
@@ -490,6 +554,12 @@ function addTextSetting(plugin, container, name, desc, value, apply, isSecret = 
 function mergeAccounts(accounts) {
   const byId = new Map((accounts || []).map((account) => [account.id, account]));
   return DEFAULT_SETTINGS.accounts.map((base) => Object.assign({}, base, byId.get(base.id) || {}));
+}
+
+function normalizeAutoSyncInterval(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 1) return 10;
+  return Math.max(1, Math.round(parsed));
 }
 
 function validateAccount(account) {

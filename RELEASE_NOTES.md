@@ -1,6 +1,7 @@
 # Release Notes
 
 ## v0.1.1
+- Added optional automatic polling sync with user-configurable minute interval and ribbon icon states for syncing/new mail/errors.
 - Added automatic per-account output folders when account outputFolder is blank, e.g. QQ number + QQ邮箱 and Gmail username + Gmail.
 - Changed default filename layout to subject/date; account identity can be represented by the output folder name.
 - Added {accountShort} filename token and changed default filename layout to subject/date/accountShort for cleaner file lists.
@@ -24,6 +25,7 @@
 - Duplicate prevention using `Message-ID`
 - Beginner-friendly documentation
 - CC BY-NC-SA 4.0 license notes added
+
 
 
 
