@@ -236,9 +236,13 @@ module.exports = class EmailImporterPlugin extends Plugin {
   setupAutoSync() {
     if (!this.settings.autoSyncEnabled) return;
     const minutes = normalizeAutoSyncInterval(this.settings.autoSyncIntervalMinutes);
-    this.registerInterval(window.setInterval(() => {
+    const timer = setInterval(() => {
       this.syncAllAccounts({ silent: true, automatic: true });
-    }, minutes * 60 * 1000));
+    }, minutes * 60 * 1000);
+
+    if (typeof this.registerInterval === 'function') {
+      this.registerInterval(timer);
+    }
   }
 
   setRibbonState(state, enabled = true) {
