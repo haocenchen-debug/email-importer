@@ -1,5 +1,9 @@
 # Release Notes
 
+## v0.1.2
+- Fixed plugin initialization failure when auto sync is enabled on startup.
+- Fixed `Folder already exists` startup warning when standard folders already exist.
+- Improved auto sync startup compatibility and folder creation idempotency.
 ## v0.1.1
 - Fixed initialization warning when standard folders already exist.
 - Fixed auto sync initialization compatibility by avoiding direct window.setInterval usage during plugin startup.
@@ -27,6 +31,7 @@
 - Duplicate prevention using `Message-ID`
 - Beginner-friendly documentation
 - CC BY-NC-SA 4.0 license notes added
+
 
 
 
