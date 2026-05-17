@@ -1,6 +1,7 @@
 # Release Notes
 
 ## v0.1.1
+- Strip leftover MIME boundaries and part headers from final imported text output.
 - Added broader charset decoding for GBK/GB18030/GB2312/Big5 and filtered multipart placeholder text.
 - Improved MIME decoding for multipart emails, quoted-printable bodies, base64 bodies, and HTML-to-text fallback.
 - Fixed IMAP `FETCH` parsing bug where imported email body could become `A00xx OK FETCH Completed`.
@@ -17,6 +18,7 @@
 - Duplicate prevention using `Message-ID`
 - Beginner-friendly documentation
 - CC BY-NC-SA 4.0 license notes added
+
 
 
 

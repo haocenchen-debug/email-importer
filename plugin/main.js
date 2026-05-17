@@ -549,16 +549,18 @@ function decodeMimeWords(input) {
 }
 
 function extractReadableText(rawBody) {
-  return parseMimeEntity(rawBody) || '';
+  return stripMimeResidue(parseMimeEntity(rawBody) || '');
 }
 
-function parseMimeEntity(entityText) {
+function parseMimeEntity(entityText, depth = 0) {
+  if (depth > 8) return '';
   const normalized = String(entityText || '').replace(/\r/g, '');
   const { headers, body } = splitHeadersAndBody(normalized);
   const contentType = getHeaderValue(headers, 'Content-Type').toLowerCase();
+  const fallbackBoundary = extractBoundaryFromText(body);
 
-  if (contentType.includes('multipart/')) {
-    const boundary = extractBoundary(contentType);
+  if (contentType.includes('multipart/') || fallbackBoundary) {
+    const boundary = extractBoundary(contentType) || fallbackBoundary;
     if (boundary) {
       const parts = splitMimeParts(body, boundary);
       const plainParts = [];
@@ -568,7 +570,7 @@ function parseMimeEntity(entityText) {
         const partHeaders = splitHeadersAndBody(part).headers;
         const partType = getHeaderValue(partHeaders, 'Content-Type').toLowerCase();
         if (partType.includes('text/plain')) {
-          const text = parseMimeEntity(part);
+          const text = parseMimeEntity(part, depth + 1);
           if (isMeaningfulMailText(text)) plainParts.push(text);
         }
       }
@@ -581,7 +583,7 @@ function parseMimeEntity(entityText) {
         const partHeaders = splitHeadersAndBody(part).headers;
         const partType = getHeaderValue(partHeaders, 'Content-Type').toLowerCase();
         if (partType.includes('text/html')) {
-          const text = parseMimeEntity(part);
+          const text = parseMimeEntity(part, depth + 1);
           if (isMeaningfulMailText(text)) htmlParts.push(text);
         }
       }
@@ -591,7 +593,7 @@ function parseMimeEntity(entityText) {
       }
 
       for (const part of parts) {
-        const text = parseMimeEntity(part);
+        const text = parseMimeEntity(part, depth + 1);
         if (isMeaningfulMailText(text)) return cleanupText(text);
       }
     }
@@ -619,6 +621,11 @@ function getHeaderValue(headerText, headerName) {
 
 function extractBoundary(headerText) {
   return /boundary="?([^"\n;]+)"?/i.exec(String(headerText || ''))?.[1] || '';
+}
+
+function extractBoundaryFromText(text) {
+  const match = String(text || '').match(/(?:^|\n)--([^\s\n]+)(?=\n|$)/);
+  return match?.[1]?.replace(/--$/, '') || '';
 }
 
 function splitMimeParts(bodyText, boundary) {
@@ -699,11 +706,22 @@ function isMeaningfulMailText(text) {
 }
 
 function cleanupText(text) {
-  return decodeHtmlEntities(decodeLooseQuotedPrintableText(String(text || '')))
+  return stripMimeResidue(decodeHtmlEntities(decodeLooseQuotedPrintableText(String(text || ''))))
     .replace(/\0/g, '')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+function stripMimeResidue(text) {
+  return String(text || '')
+    .replace(/(?:^|\n)--[^\s\n]+(?:--)?(?=\n|$)/g, '\n')
+    .replace(/(?:^|\n)\s*(Content-Type|Content-Transfer-Encoding|Content-Disposition|Content-ID|Mime-Version):[^\n]*(?:\n[ \t]+[^\n]*)*/gi, '\n')
+    .replace(/(?:^|\n)\s*charset="?[^"\n;]+"?/gi, '\n')
+    .replace(/(?:^|\n)\s*boundary="?[^"\n;]+"?/gi, '\n')
+    .replace(/(?:^|\n)\s*----==_mimepart_[^\s\n]+/gi, '\n')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
