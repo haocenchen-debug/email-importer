@@ -1,9 +1,9 @@
 {
-  "id": "obsidian-email-importer",
+  "id": "email-importer",
   "name": "Email Importer",
   "version": "0.1.4",
   "minAppVersion": "1.7.2",
-  "description": "Import Gmail and QQ email into your Obsidian vault via IMAP.",
+  "description": "Import Gmail and QQ email into your vault via IMAP.",
   "author": "OpenAI",
   "isDesktopOnly": true
 }
