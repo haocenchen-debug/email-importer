@@ -96,3 +96,20 @@ You can later add screenshots for:
 - Gmail configuration example
 - QQ Mail configuration example
 - imported Markdown note example
+
+
+## Community release requirements
+
+This repository is structured to match community plugin review expectations:
+
+- root `manifest.json`
+- root `versions.json`
+- root `LICENSE`
+- release tag matching the plugin version exactly
+- release assets: `manifest.json`, `main.js`, `styles.css`
+
+Current public repository:
+
+```text
+https://github.com/haocenchen-debug/email-importer
+```
