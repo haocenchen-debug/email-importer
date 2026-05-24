@@ -1,6 +1,6 @@
-# Obsidian Email Importer
+# Email Importer
 
-A local Obsidian plugin that imports email from Gmail and QQ Mail via IMAP and writes the result into your vault as Markdown notes.
+A local plugin that imports email from Gmail and QQ Mail via IMAP and writes the result into your vault as Markdown notes.
 
 ## What it does
 - Import email from Gmail
@@ -10,7 +10,7 @@ A local Obsidian plugin that imports email from Gmail and QQ Mail via IMAP and w
 - Avoid duplicate imports based on `Message-ID`
 - Auto-create a standard folder structure for email capture
 - Support per-account output folders
-- Run sync directly inside Obsidian
+- Run sync directly inside the app
 - Save PDF/image attachments and link them from the generated note
 - Organize imported mail by sender name and sender email
 - Show 20-second clickable in-app new mail toasts
@@ -27,8 +27,8 @@ This is an MVP-first plugin focused on making the import workflow usable:
 The plugin includes MIME text cleanup, attachment export, sender-based folders, filtering, and automatic duplicate prevention. AI summarization and deeper classification can be added later.
 
 ## Installation
-1. Put the plugin folder into your Obsidian plugins directory.
-2. Open Obsidian.
+1. Put the plugin folder into your plugins directory.
+2. Open the app.
 3. Go to:
 
 ```text
@@ -127,14 +127,14 @@ If you share or adapt this project, include:
 Recommended attribution format:
 
 ```text
-Based on Obsidian Email Importer by [Author Name], licensed under CC BY-NC-SA 4.0.
+Based on Email Importer by [Author Name], licensed under CC BY-NC-SA 4.0.
 Changes were made to the original project.
 ```
 
 ## Notes
 - Gmail usually requires an App Password instead of your normal password.
 - QQ Mail usually requires IMAP/SMTP to be enabled and an authorization code instead of the account password.
-- If the plugin does not appear in Obsidian, fully restart Obsidian after installing or updating it.
+- If the plugin does not appear in the app, fully restart the app after installing or updating it.
 
 
 ## Recent improvements

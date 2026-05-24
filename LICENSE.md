@@ -24,7 +24,7 @@ https://creativecommons.org/licenses/by-nc-sa/4.0/
 
 ## Recommended attribution
 ```text
-Based on Obsidian Email Importer by the original author, licensed under CC BY-NC-SA 4.0.
+Based on Email Importer by the original author, licensed under CC BY-NC-SA 4.0.
 Changes were made to the original project.
 ```
 

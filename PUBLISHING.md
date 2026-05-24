@@ -4,7 +4,7 @@
 Recommended repository name:
 
 ```text
-obsidian-email-importer
+email-importer
 ```
 
 ## 2. Initialize Git locally
@@ -16,7 +16,7 @@ git commit -m "feat: initial public release of obsidian email importer"
 
 ## 3. Create the remote repository with GitHub CLI
 ```bash
-gh repo create haocenchen-debug/obsidian-email-importer --public --description "Import Gmail and QQ Mail into Obsidian via IMAP and save messages as Markdown notes." --source=. --remote=origin --push
+gh repo create haocenchen-debug/email-importer --public --description "Import Gmail and QQ Mail into your vault via IMAP and save messages as Markdown notes." --source=. --remote=origin --push
 ```
 
 ## 4. Suggested first commit messages

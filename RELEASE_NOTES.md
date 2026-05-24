@@ -34,7 +34,7 @@
 - Changed default filename layout to subject/date; account identity can be represented by the output folder name.
 - Added {accountShort} filename token and changed default filename layout to subject/date/accountShort for cleaner file lists.
 - Moved ribbon sync action lower and highlighted it for easier one-click access.
-- Added an editor toolbar compatible sync command for Obsidian mobile/quick toolbars.
+- Added an editor toolbar compatible sync command for the app mobile/quick toolbars.
 - Added prominent sync entry points in the ribbon and at the top of settings; trimmed leftover HTML tails from imported text.
 - Strip leftover MIME boundaries and part headers from final imported text output.
 - Added broader charset decoding for GBK/GB18030/GB2312/Big5 and filtered multipart placeholder text.
