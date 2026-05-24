@@ -13,6 +13,8 @@ An Obsidian plugin that imports email from Gmail and QQ Mail via IMAP and saves 
 - Run sync directly from Obsidian
 - Export attachments and link them from email notes
 - Organize imported mail by sender name and sender email
+- Show clickable in-app and desktop notifications for newly imported mail
+- Keep read/unread/attachment folder names fixed in English
 
 ## Repository structure
 ```text

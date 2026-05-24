@@ -10,6 +10,118 @@
   margin-bottom: 12px;
 }
 
+.email-importer-test-button.is-testing button {
+  background-color: var(--background-modifier-hover);
+  color: var(--text-muted);
+}
+
+.email-importer-test-button.is-success button {
+  background-color: var(--color-green);
+  color: var(--text-on-accent);
+}
+
+.email-importer-test-button.is-error button {
+  background-color: var(--color-red);
+  color: var(--text-on-accent);
+}
+
+.email-importer-mail-toast {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  width: 360px;
+  max-width: calc(100vw - 48px);
+  background: linear-gradient(180deg, #1f7a3d 0%, #176532 100%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  padding: 12px;
+  z-index: 99999;
+  color: #f3fff7;
+}
+
+.email-importer-mail-toast-title {
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 10px;
+  color: #ffffff;
+}
+
+.email-importer-mail-toast-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.email-importer-mail-toast-item {
+  width: 100%;
+  text-align: left;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.email-importer-mail-toast-item:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.email-importer-mail-toast-subject {
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 1.35;
+  margin-bottom: 3px;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.email-importer-mail-toast-meta {
+  font-size: 11px;
+  color: rgba(243, 255, 247, 0.82);
+  line-height: 1.35;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.email-importer-mail-toast-from,
+.email-importer-mail-toast-account {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.email-importer-mail-toast-from {
+  flex: 1 1 auto;
+}
+
+.email-importer-mail-toast-account {
+  flex: 0 0 auto;
+  color: rgba(243, 255, 247, 0.68);
+}
+
+.email-importer-mail-toast-sep {
+  flex: 0 0 auto;
+  color: rgba(243, 255, 247, 0.45);
+}
+
+.email-importer-mail-toast-close {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.email-importer-mail-toast-close:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
 .workspace-ribbon .email-importer-sync-ribbon-icon {
   order: 999;
   margin-top: 12px;

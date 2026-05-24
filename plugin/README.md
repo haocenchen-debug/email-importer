@@ -13,6 +13,9 @@ A local Obsidian plugin that imports email from Gmail and QQ Mail via IMAP and w
 - Run sync directly inside Obsidian
 - Save PDF/image attachments and link them from the generated note
 - Organize imported mail by sender name and sender email
+- Show 20-second clickable in-app new mail toasts
+- Show system desktop notifications for new mail on Windows/macOS
+- Show clear green/red connection test button feedback
 
 ## Current scope
 This is an MVP-first plugin focused on making the import workflow usable:
@@ -93,11 +96,12 @@ Default subfolders:
 
 You can also customize the root folder and assign different output folders to Gmail and QQ Mail.
 
-Imported messages are grouped under each account by read state and sender:
+Imported messages are grouped under each account by read state and sender, while the state folder names stay fixed in English:
 
 ```text
-个人笔记/邮件入库/40933085QQ邮箱/未读邮件/发件人姓名 发件邮箱/邮件.md
-个人笔记/邮件入库/40933085QQ邮箱/未读邮件/发件人姓名 发件邮箱/附件/邮件标题/附件.pdf
+个人笔记/邮件入库/40933085QQ邮箱/Unread Mail/Sender Name sender@example.com/mail.md
+个人笔记/邮件入库/40933085QQ邮箱/Read Mail/Sender Name sender@example.com/mail.md
+个人笔记/邮件入库/40933085QQ邮箱/Unread Mail/Sender Name sender@example.com/Attachments/Mail Subject/file.pdf
 ```
 
 ## License
@@ -131,3 +135,11 @@ Changes were made to the original project.
 - Gmail usually requires an App Password instead of your normal password.
 - QQ Mail usually requires IMAP/SMTP to be enabled and an authorization code instead of the account password.
 - If the plugin does not appear in Obsidian, fully restart Obsidian after installing or updating it.
+
+
+## Recent improvements
+- App Passwords copied with spaces are normalized automatically before IMAP login.
+- QQ large-attachment messages are recognized and converted into readable download links.
+- Image attachments are rendered as embedded previews in generated notes when appropriate.
+- Connection test buttons now show visible success/failure colors.
+- New mail can trigger both an in-app toast and a desktop notification.

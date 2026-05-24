@@ -1,5 +1,15 @@
 # Release Notes
 
+## v0.1.4
+- Added 20-second clickable in-app new mail toast cards.
+- Added desktop notifications for newly imported mail on supported desktop systems.
+- Added visible green/red/gray connection test button states.
+- Fixed account UI language switching while keeping mail state folders fixed in English.
+- Fixed folder naming to stay consistent as `Read Mail`, `Unread Mail`, and `Attachments`.
+- Normalized Gmail App Password input by stripping spaces/newlines automatically.
+- Improved QQ large attachment mail parsing by extracting readable download links.
+- Improved image attachment handling and preview rendering.
+
 ## v0.1.3
 - Changed sync batching to keep scanning from newest to older messages until the configured number of actual imports is reached.
 - Added attachment extraction and vault saving for PDF/image/binary email attachments.

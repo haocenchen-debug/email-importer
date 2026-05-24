@@ -7,6 +7,7 @@ const DEFAULT_SETTINGS = {
   outputFolder: '个人笔记/邮件入库/待整理',
   standardRootFolder: '个人笔记/邮件入库',
   autoCreateStandardFolders: true,
+  locale: 'en',
   filenameTemplate: '{subject} {date}',
   defaultCategory: '待整理',
   summaryLength: 500,
@@ -226,6 +227,7 @@ module.exports = class EmailImporterPlugin extends Plugin {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
     this.settings.accounts = mergeAccounts(this.settings.accounts || []);
     this.settings.importedMessageIds = this.settings.importedMessageIds || {};
+    this.settings.locale = normalizeLocale(this.settings.locale);
     this.settings.autoSyncEnabled = !!this.settings.autoSyncEnabled;
     this.settings.autoSyncIntervalMinutes = normalizeAutoSyncInterval(this.settings.autoSyncIntervalMinutes);
     this.settings.filterEnabled = !!this.settings.filterEnabled;
@@ -235,7 +237,80 @@ module.exports = class EmailImporterPlugin extends Plugin {
   }
 
   async saveSettings() {
+    this.settings.locale = normalizeLocale(this.settings.locale);
     await this.saveData(this.settings);
+  }
+
+  showImportedMailToast(importedNotes) {
+    const t = getI18n(this.settings.locale);
+    const container = document.createElement('div');
+    container.className = 'email-importer-mail-toast';
+
+    const title = document.createElement('div');
+    title.className = 'email-importer-mail-toast-title';
+    title.textContent = t.newMailToastTitle(importedNotes.length);
+    container.appendChild(title);
+
+    const list = document.createElement('div');
+    list.className = 'email-importer-mail-toast-list';
+    for (const note of importedNotes.slice(0, 5)) {
+      const item = document.createElement('button');
+      item.className = 'email-importer-mail-toast-item';
+      item.type = 'button';
+      item.innerHTML = `<div class=\"email-importer-mail-toast-subject\">${escapeHtml(note.subject)}</div><div class=\"email-importer-mail-toast-meta\"><span class=\"email-importer-mail-toast-from\">${escapeHtml(note.from)}</span><span class=\"email-importer-mail-toast-sep\">·</span><span class=\"email-importer-mail-toast-account\">${escapeHtml(note.account)}</span></div>`;
+      item.addEventListener('click', async () => {
+        const file = this.app.vault.getAbstractFileByPath(note.path);
+        if (file) await this.app.workspace.getLeaf(true).openFile(file);
+        container.remove();
+      });
+      list.appendChild(item);
+    }
+    container.appendChild(list);
+
+    const close = document.createElement('button');
+    close.className = 'email-importer-mail-toast-close';
+    close.type = 'button';
+    close.textContent = t.closeLabel;
+    close.addEventListener('click', () => container.remove());
+    container.appendChild(close);
+
+    document.body.appendChild(container);
+    window.setTimeout(() => container.remove(), 20000);
+  }
+
+  showImportedMailSystemNotifications(importedNotes) {
+    if (typeof Notification === 'undefined') return;
+    const t = getI18n(this.settings.locale);
+    const notes = importedNotes.slice(0, 3);
+
+    const sendNotifications = () => {
+      for (const note of notes) {
+        const notification = new Notification(t.systemNotificationTitle, {
+          body: `${note.subject}\n${note.from}`,
+          silent: false
+        });
+        notification.onclick = async () => {
+          try {
+            window.focus();
+          } catch (_) {}
+          const file = this.app.vault.getAbstractFileByPath(note.path);
+          if (file) await this.app.workspace.getLeaf(true).openFile(file);
+          notification.close();
+        };
+        window.setTimeout(() => notification.close(), 20000);
+      }
+    };
+
+    if (Notification.permission === 'granted') {
+      sendNotifications();
+      return;
+    }
+
+    if (Notification.permission !== 'denied') {
+      Notification.requestPermission().then((permission) => {
+        if (permission === 'granted') sendNotifications();
+      }).catch(() => {});
+    }
   }
 
   async ensureStandardStructureIfNeeded() {
@@ -265,34 +340,37 @@ module.exports = class EmailImporterPlugin extends Plugin {
   }
 
   async syncAllAccounts(options = {}) {
+    const t = getI18n(this.settings.locale);
     if (this.isSyncing) {
-      if (!options.silent) new Notice('Email Importer: 正在同步中，请稍候');
+      if (!options.silent) new Notice(t.busy);
       return 0;
     }
 
     const enabledAccounts = this.settings.accounts.filter((account) => account.enabled);
     if (!enabledAccounts.length) {
-      if (!options.silent) new Notice('Email Importer: 请先在设置中启用至少一个邮箱账号');
+      if (!options.silent) new Notice(t.noAccounts);
       return 0;
     }
 
     this.isSyncing = true;
     this.setRibbonState('is-syncing', true);
     this.clearRibbonState('has-error');
-    if (!options.silent) new Notice(`Email Importer: 开始同步 ${enabledAccounts.length} 个邮箱...`);
+    if (!options.silent) new Notice(t.syncStart(enabledAccounts.length));
     let imported = 0;
     let skipped = 0;
     let failed = false;
+    const importedNotes = [];
 
     for (const account of enabledAccounts) {
       try {
         const result = await this.syncAccount(account);
         imported += result.imported;
         skipped += result.skipped;
+        if (result.importedNotes?.length) importedNotes.push(...result.importedNotes);
       } catch (error) {
         failed = true;
         console.error('Email Importer sync failed', account.name, error);
-        if (!options.silent) new Notice(`同步 ${account.name} 失败：${error.message}`);
+        if (!options.silent) new Notice(t.accountFailed(account.name, error.message));
       }
     }
 
@@ -301,8 +379,12 @@ module.exports = class EmailImporterPlugin extends Plugin {
     this.setRibbonState('is-syncing', false);
     this.setRibbonState('has-error', failed);
     if (imported > 0) this.setRibbonState('has-new-mail', true);
-    if (!options.silent) new Notice(`Email Importer: 同步完成，导入 ${imported} 封，过滤 ${skipped} 封`);
-    if (options.silent && imported > 0) new Notice(`Email Importer: 自动同步导入 ${imported} 封新邮件，过滤 ${skipped} 封`);
+    if (!options.silent) new Notice(t.syncDone(imported, skipped));
+    if (options.silent && imported > 0) new Notice(t.autoSyncDone(imported, skipped));
+    if (importedNotes.length) {
+      this.showImportedMailToast(importedNotes);
+      this.showImportedMailSystemNotifications(importedNotes);
+    }
     return imported;
   }
 
@@ -311,11 +393,11 @@ module.exports = class EmailImporterPlugin extends Plugin {
     const client = new ImapClient(account);
     try {
       await client.testConnection();
-      new Notice(`Email Importer: ${account.name} 连接成功`);
+      new Notice(getI18n(this.settings.locale).connectionOk(account.name));
       return true;
     } catch (error) {
       console.error('Email Importer connection test failed', account.name, error);
-      new Notice(`Email Importer: ${account.name} 连接失败：${error.message}`);
+      new Notice(getI18n(this.settings.locale).connectionFail(account.name, error.message));
       return false;
     } finally {
       await client.close();
@@ -327,6 +409,7 @@ module.exports = class EmailImporterPlugin extends Plugin {
     const client = new ImapClient(account);
     let imported = 0;
     let skipped = 0;
+    const importedNotes = [];
     try {
       await client.connect();
       const unreadSeqs = await client.search('UNSEEN');
@@ -352,7 +435,7 @@ module.exports = class EmailImporterPlugin extends Plugin {
             };
             continue;
           }
-          await this.writeEmailNote(account, email, readState);
+          const notePath = await this.writeEmailNote(account, email, readState);
           this.settings.importedMessageIds[messageIdKey] = {
             importedAt: new Date().toISOString(),
             account: account.name,
@@ -361,6 +444,13 @@ module.exports = class EmailImporterPlugin extends Plugin {
           };
           imported += 1;
           importedForState += 1;
+          importedNotes.push({
+            path: notePath,
+            account: account.name,
+            subject: email.subject || 'No Subject',
+            from: email.from || '',
+            date: email.date || ''
+          });
           if (account.markSeen) {
             await client.addFlags(seq, ['\\Seen']);
           }
@@ -374,7 +464,7 @@ module.exports = class EmailImporterPlugin extends Plugin {
     } finally {
       await client.close();
     }
-    return { imported, skipped };
+    return { imported, skipped, importedNotes };
   }
 
   async writeEmailNote(account, email, readState = 'unread') {
@@ -393,20 +483,23 @@ module.exports = class EmailImporterPlugin extends Plugin {
     const filePath = uniquePath(this.app, path.posix.join(folder, fileName));
     const bodyText = summarizeText(email.bodyText || '', this.settings.summaryLength);
     const attachmentLinks = await this.saveEmailAttachments(folder, subject, email.attachments || []);
+    const externalAttachmentLinks = email.externalAttachments || [];
     const content = buildNoteContent({
       account,
       email,
       date,
       bodyText,
       attachmentLinks,
+      externalAttachmentLinks,
       category: this.settings.defaultCategory || '待整理'
     });
     await this.app.vault.create(filePath, content);
+    return filePath;
   }
 
   async saveEmailAttachments(folder, subject, attachments) {
     if (!attachments.length) return [];
-    const attachmentFolder = path.posix.join(folder, '附件', sanitizeFileName(subject || '无主题邮件'));
+    const attachmentFolder = path.posix.join(folder, 'Attachments', sanitizeFileName(subject || 'No Subject'));
     await ensureFolder(this.app, attachmentFolder);
     const links = [];
     for (const attachment of attachments) {
@@ -432,32 +525,46 @@ class EmailImporterSettingTab extends PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl('h2', { text: 'Email Importer 设置' });
+    const t = getI18n(this.plugin.settings.locale);
+    containerEl.createEl('h2', { text: t.title });
 
     new Setting(containerEl)
-      .setName('📥 立即同步邮件')
-      .setDesc('最常用入口：点击后立即同步所有已启用邮箱')
+      .setName(t.languageName)
+      .setDesc(t.languageDesc)
+      .addDropdown((dropdown) => dropdown
+        .addOption('zh', t.zhOption)
+        .addOption('en', t.enOption)
+        .setValue(normalizeLocale(this.plugin.settings.locale))
+        .onChange(async (value) => {
+          this.plugin.settings.locale = normalizeLocale(value);
+          await this.plugin.saveSettings();
+          this.display();
+        }));
+
+    new Setting(containerEl)
+      .setName(t.syncNowName)
+      .setDesc(t.syncNowDesc)
       .addButton((button) => button
-        .setButtonText('开始同步')
+        .setButtonText(t.syncButton)
         .setCta()
         .onClick(async () => {
           await this.plugin.syncAllAccounts();
         }));
 
     new Setting(containerEl)
-      .setName('自动同步')
-      .setDesc('开启后按固定间隔自动检查新邮件；仍会使用 Message-ID 去重，避免重复导入')
+      .setName(t.autoSyncName)
+      .setDesc(t.autoSyncDesc)
       .addToggle((toggle) => toggle
         .setValue(!!this.plugin.settings.autoSyncEnabled)
         .onChange(async (value) => {
           this.plugin.settings.autoSyncEnabled = value;
           await this.plugin.saveSettings();
-          new Notice('Email Importer: 自动同步设置已保存，重启或重载插件后生效');
+          new Notice(t.autoSyncSavedNotice);
         }));
 
     new Setting(containerEl)
-      .setName('自动同步间隔（分钟）')
-      .setDesc('例如 1、10、30。建议 10 分钟以上；设置过短可能导致邮箱服务限制')
+      .setName(t.autoSyncIntervalName)
+      .setDesc(t.autoSyncIntervalDesc)
       .addText((text) => text
         .setPlaceholder('10')
         .setValue(String(this.plugin.settings.autoSyncIntervalMinutes || 10))
@@ -467,8 +574,8 @@ class EmailImporterSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
-      .setName('输出目录')
-      .setDesc('全局默认输出目录；如果某个邮箱配置了自己的输出目录，会优先使用该邮箱目录')
+      .setName(t.outputFolderName)
+      .setDesc(t.outputFolderDesc)
       .addText((text) => text
         .setPlaceholder('个人笔记/邮件入库/待整理')
         .setValue(this.plugin.settings.outputFolder)
@@ -478,8 +585,8 @@ class EmailImporterSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
-      .setName('标准根目录')
-      .setDesc('自动创建标准邮件目录结构时使用的根目录')
+      .setName(t.standardRootName)
+      .setDesc(t.standardRootDesc)
       .addText((text) => text
         .setPlaceholder('个人笔记/邮件入库')
         .setValue(this.plugin.settings.standardRootFolder || DEFAULT_SETTINGS.standardRootFolder)
@@ -489,8 +596,8 @@ class EmailImporterSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
-      .setName('自动创建标准目录结构')
-      .setDesc('插件加载时自动创建：待整理 / 账单凭证 / 项目沟通 / 账号通知 / 精华摘要')
+      .setName(t.autoCreateFoldersName)
+      .setDesc(t.autoCreateFoldersDesc)
       .addToggle((toggle) => toggle
         .setValue(!!this.plugin.settings.autoCreateStandardFolders)
         .onChange(async (value) => {
@@ -498,23 +605,23 @@ class EmailImporterSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
           if (value) {
             await this.plugin.ensureStandardStructureIfNeeded();
-            new Notice('Email Importer: 已检查并创建标准目录结构');
+            new Notice(this.t().standardFoldersReadyNotice);
           }
         }));
 
     new Setting(containerEl)
-      .setName('立即创建标准目录')
-      .setDesc('手动执行一次标准目录结构创建')
+      .setName(t.createFoldersNowName)
+      .setDesc(t.createFoldersNowDesc)
       .addButton((button) => button
-        .setButtonText('创建目录')
+        .setButtonText(t.createFoldersButton)
         .onClick(async () => {
           await this.plugin.ensureStandardStructureIfNeeded();
-          new Notice('Email Importer: 标准目录结构已创建/已存在');
+          new Notice(t.createFoldersNotice);
         }));
 
     new Setting(containerEl)
-      .setName('默认分类')
-      .setDesc('写入 frontmatter 的默认 category')
+      .setName(t.defaultCategoryName)
+      .setDesc(t.defaultCategoryDesc)
       .addText((text) => text
         .setPlaceholder('待整理')
         .setValue(this.plugin.settings.defaultCategory)
@@ -524,8 +631,8 @@ class EmailImporterSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
-      .setName('摘要长度')
-      .setDesc('正文摘要最长保留多少字符')
+      .setName(t.summaryLengthName)
+      .setDesc(t.summaryLengthDesc)
       .addText((text) => text
         .setPlaceholder('500')
         .setValue(String(this.plugin.settings.summaryLength || 500))
@@ -535,12 +642,12 @@ class EmailImporterSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    containerEl.createEl('h3', { text: '邮件过滤' });
-    containerEl.createEl('p', { text: '优先级：白名单邮箱 > 黑名单邮箱 > 主题关键词。白名单/黑名单只匹配发件人邮箱地址，关键词只匹配主题。' });
+    containerEl.createEl('h3', { text: t.filterSectionTitle });
+    containerEl.createEl('p', { text: t.filterPriorityDesc });
 
     new Setting(containerEl)
-      .setName('启用邮件过滤')
-      .setDesc('开启后按下面规则跳过不需要入库的邮件；不会删除邮箱原邮件')
+      .setName(t.filterEnabledName)
+      .setDesc(t.filterEnabledDesc)
       .addToggle((toggle) => toggle
         .setValue(!!this.plugin.settings.filterEnabled)
         .onChange(async (value) => {
@@ -551,8 +658,8 @@ class EmailImporterSettingTab extends PluginSettingTab {
     addTextAreaSetting(
       this.plugin,
       containerEl,
-      '白名单邮箱地址',
-      '一行一个。命中后直接导入，例如 noreply@github.com 或 @notify.cloudflare.com',
+      t.whitelistName,
+      t.whitelistDesc,
       this.plugin.settings.whitelistEmails || '',
       async (value) => this.plugin.settings.whitelistEmails = value
     );
@@ -560,8 +667,8 @@ class EmailImporterSettingTab extends PluginSettingTab {
     addTextAreaSetting(
       this.plugin,
       containerEl,
-      '黑名单邮箱地址',
-      '一行一个。命中后跳过导入，例如 @temu.com 或 ads@example.com',
+      t.blacklistName,
+      t.blacklistDesc,
       this.plugin.settings.blacklistEmails || '',
       async (value) => this.plugin.settings.blacklistEmails = value
     );
@@ -569,22 +676,22 @@ class EmailImporterSettingTab extends PluginSettingTab {
     addTextAreaSetting(
       this.plugin,
       containerEl,
-      '主题关键词',
-      '一行一个。只匹配邮件主题，例如 优惠 / 促销 / Hot deals',
+      t.subjectKeywordsName,
+      t.subjectKeywordsDesc,
       this.plugin.settings.subjectKeywords || '',
       async (value) => this.plugin.settings.subjectKeywords = value
     );
 
-    containerEl.createEl('h3', { text: '邮箱账号' });
-    containerEl.createEl('p', { text: 'Gmail 请使用 App Password；QQ 邮箱请开启 IMAP 并使用授权码。' });
+    containerEl.createEl('h3', { text: t.accountsTitle });
+    containerEl.createEl('p', { text: t.accountsDesc });
 
     this.plugin.settings.accounts.forEach((account, index) => {
       const section = containerEl.createDiv({ cls: 'email-importer-account' });
-      section.createEl('h4', { text: account.name || `账号 ${index + 1}` });
+      section.createEl('h4', { text: account.name || `${t.accountLabel} ${index + 1}` });
 
       new Setting(section)
-        .setName('启用')
-        .setDesc('启用后会参与同步')
+        .setName(t.accountEnabledName)
+        .setDesc(t.accountEnabledDesc)
         .addToggle((toggle) => toggle
           .setValue(!!account.enabled)
           .onChange(async (value) => {
@@ -592,18 +699,18 @@ class EmailImporterSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           }));
 
-      addTextSetting(this.plugin, section, '显示名称', '例如 Gmail', account.name, async (value) => account.name = value || account.name);
-      addTextSetting(this.plugin, section, 'IMAP 主机', 'imap.gmail.com / imap.qq.com', account.host, async (value) => account.host = value || account.host);
-      addTextSetting(this.plugin, section, '端口', '993', String(account.port || 993), async (value) => account.port = Number(value) || 993);
-      addTextSetting(this.plugin, section, '用户名', '邮箱地址', account.username, async (value) => account.username = value.trim());
-      addTextSetting(this.plugin, section, '密码 / 授权码', 'Gmail App Password / QQ 授权码', account.password, async (value) => account.password = value, true);
-      addTextSetting(this.plugin, section, '文件夹', 'INBOX', account.folder || 'INBOX', async (value) => account.folder = value.trim() || 'INBOX');
-      addTextSetting(this.plugin, section, '邮箱专属输出目录', '可留空。留空时自动使用：QQ号QQ邮箱 / 用户名Gmail', account.outputFolder || '', async (value) => account.outputFolder = value.trim());
-      addTextSetting(this.plugin, section, '每次最多导入', '10', String(account.maxEmails || 10), async (value) => account.maxEmails = Number(value) || 10);
+      addTextSetting(this.plugin, section, t.accountDisplayName, t.accountDisplayNameDesc, account.name, async (value) => account.name = value || account.name);
+      addTextSetting(this.plugin, section, t.imapHostName, t.imapHostDesc, account.host, async (value) => account.host = value || account.host);
+      addTextSetting(this.plugin, section, t.portName, t.portDesc, String(account.port || 993), async (value) => account.port = Number(value) || 993);
+      addTextSetting(this.plugin, section, t.usernameName, t.usernameDesc, account.username, async (value) => account.username = value.trim());
+      addTextSetting(this.plugin, section, t.passwordName, t.passwordDesc, account.password, async (value) => account.password = normalizeAccountPassword(value), true);
+      addTextSetting(this.plugin, section, t.folderName, t.folderDesc, account.folder || 'INBOX', async (value) => account.folder = value.trim() || 'INBOX');
+      addTextSetting(this.plugin, section, t.accountOutputName, t.accountOutputDesc, account.outputFolder || '', async (value) => account.outputFolder = value.trim());
+      addTextSetting(this.plugin, section, t.maxEmailsName, t.maxEmailsDesc, String(account.maxEmails || 10), async (value) => account.maxEmails = Number(value) || 10);
 
       new Setting(section)
-        .setName('同步已读邮件')
-        .setDesc('默认关闭，只同步未读邮件。开启后会额外同步已读邮件，并分别写入“已读邮件 / 未读邮件”子文件夹')
+        .setName(t.syncReadName)
+        .setDesc(t.syncReadDesc)
         .addToggle((toggle) => toggle
           .setValue(!!account.syncRead)
           .onChange(async (value) => {
@@ -612,8 +719,8 @@ class EmailImporterSettingTab extends PluginSettingTab {
           }));
 
       new Setting(section)
-        .setName('同步后标记为已读')
-        .setDesc('关闭时使用 BODY.PEEK，不会改动已读状态')
+        .setName(t.markSeenName)
+        .setDesc(t.markSeenDesc)
         .addToggle((toggle) => toggle
           .setValue(!!account.markSeen)
           .onChange(async (value) => {
@@ -622,27 +729,32 @@ class EmailImporterSettingTab extends PluginSettingTab {
           }));
 
       new Setting(section)
-        .setName('测试连接')
-        .setDesc('验证当前邮箱配置能否成功连接 IMAP')
+        .setName(t.testConnectionName)
+        .setDesc(t.testConnectionDesc)
         .addButton((button) => button
-          .setButtonText(`测试 ${account.name || `账号 ${index + 1}`}`)
+          .setClass('email-importer-test-button')
+          .setButtonText(t.testConnectionButton(account.name || `${t.accountLabel} ${index + 1}`))
           .onClick(async () => {
             button.setDisabled(true);
-            button.setButtonText('测试中...');
+            button.buttonEl.classList.remove('is-success', 'is-error');
+            button.buttonEl.classList.add('is-testing');
+            button.setButtonText(t.testing);
             try {
-              await this.plugin.testAccountConnection(account);
+              const ok = await this.plugin.testAccountConnection(account);
+              button.buttonEl.classList.remove('is-testing');
+              button.buttonEl.classList.add(ok ? 'is-success' : 'is-error');
+              button.setButtonText(ok ? t.testSuccess : t.testFailed);
             } finally {
               button.setDisabled(false);
-              button.setButtonText(`测试 ${account.name || `账号 ${index + 1}`}`);
             }
           }));
     });
 
     new Setting(containerEl)
-      .setName('立即同步')
-      .setDesc('备用入口：和顶部“立即同步邮件”按钮功能相同')
+      .setName(t.syncNowBottomName)
+      .setDesc(t.syncNowBottomDesc)
       .addButton((button) => button
-        .setButtonText('开始同步')
+        .setButtonText(t.syncButton)
         .onClick(async () => {
           await this.plugin.syncAllAccounts();
         }));
@@ -678,6 +790,186 @@ function addTextAreaSetting(plugin, container, name, desc, value, apply) {
     });
 }
 
+function normalizeLocale(locale) {
+  return String(locale || 'zh').toLowerCase().startsWith('en') ? 'en' : 'zh';
+}
+
+function getI18n(locale) {
+  const en = normalizeLocale(locale) === 'en';
+  return en ? I18N.en : I18N.zh;
+}
+
+const I18N = {
+  zh: {
+    title: 'Email Importer 设置',
+    languageName: '界面语言',
+    languageDesc: '切换设置页显示语言',
+    zhOption: '中文',
+    enOption: 'English',
+    syncNowName: '📥 立即同步邮件',
+    syncNowDesc: '最常用入口：点击后立即同步所有已启用邮箱',
+    syncButton: '开始同步',
+    autoSyncName: '自动同步',
+    autoSyncDesc: '开启后按固定间隔自动检查新邮件；仍会使用 Message-ID 去重，避免重复导入',
+    autoSyncSavedNotice: 'Email Importer: 自动同步设置已保存，重启或重载插件后生效',
+    standardFoldersReadyNotice: 'Email Importer: 已检查并创建标准目录结构',
+    autoSyncIntervalName: '自动同步间隔（分钟）',
+    autoSyncIntervalDesc: '例如 1、10、30。建议 10 分钟以上；设置过短可能导致邮箱服务限制',
+    outputFolderName: '输出目录',
+    outputFolderDesc: '全局默认输出目录；如果某个邮箱配置了自己的输出目录，会优先使用该邮箱目录',
+    standardRootName: '标准根目录',
+    standardRootDesc: '自动创建标准邮件目录结构时使用的根目录',
+    autoCreateFoldersName: '自动创建标准目录结构',
+    autoCreateFoldersDesc: '插件加载时自动创建：待整理 / 账单凭证 / 项目沟通 / 账号通知 / 精华摘要（邮件读写状态目录固定英文）',
+    createFoldersNowName: '立即创建标准目录',
+    createFoldersNowDesc: '手动执行一次标准目录结构创建',
+    createFoldersButton: '创建目录',
+    createFoldersNotice: 'Email Importer: 标准目录结构已创建/已存在',
+    defaultCategoryName: '默认分类',
+    defaultCategoryDesc: '写入 frontmatter 的默认 category',
+    summaryLengthName: '摘要长度',
+    summaryLengthDesc: '正文摘要最长保留多少字符',
+    filterSectionTitle: '邮件过滤',
+    filterPriorityDesc: '优先级：白名单邮箱 > 黑名单邮箱 > 主题关键词。白名单/黑名单只匹配发件人邮箱地址，关键词只匹配主题。',
+    filterEnabledName: '启用邮件过滤',
+    filterEnabledDesc: '开启后按下面规则跳过不需要入库的邮件；不会删除邮箱原邮件',
+    whitelistName: '白名单邮箱地址',
+    whitelistDesc: '一行一个。命中后直接导入，例如 noreply@github.com 或 @notify.cloudflare.com',
+    blacklistName: '黑名单邮箱地址',
+    blacklistDesc: '一行一个。命中后跳过导入，例如 @temu.com 或 ads@example.com',
+    subjectKeywordsName: '主题关键词',
+    subjectKeywordsDesc: '一行一个。只匹配邮件主题，例如 优惠 / 促销 / Hot deals',
+    accountsTitle: '邮箱账号',
+    accountsDesc: 'Gmail 请使用 App Password；QQ 邮箱请开启 IMAP 并使用授权码。',
+    accountLabel: '账号',
+    accountEnabledName: '启用',
+    accountEnabledDesc: '启用后会参与同步',
+    accountDisplayName: '显示名称',
+    accountDisplayNameDesc: '例如 Gmail',
+    imapHostName: 'IMAP 主机',
+    imapHostDesc: 'imap.gmail.com / imap.qq.com',
+    portName: '端口',
+    portDesc: '993',
+    usernameName: '用户名',
+    usernameDesc: '邮箱地址',
+    passwordName: '密码 / 授权码',
+    passwordDesc: 'Gmail App Password / QQ 授权码',
+    folderName: '文件夹',
+    folderDesc: 'INBOX',
+    accountOutputName: '邮箱专属输出目录',
+    accountOutputDesc: '可留空。读写状态子目录固定为英文：Read Mail / Unread Mail / Attachments',
+    maxEmailsName: '每次最多导入',
+    maxEmailsDesc: '10',
+    syncReadName: '同步已读邮件',
+    syncReadDesc: '默认关闭，只同步未读邮件。开启后会额外同步已读邮件，并分别写入“Read Mail / Unread Mail”子文件夹',
+    markSeenName: '同步后标记为已读',
+    markSeenDesc: '关闭时使用 BODY.PEEK，不会改动已读状态',
+    testConnectionName: '测试连接',
+    testConnectionDesc: '验证当前邮箱配置能否成功连接 IMAP',
+    testConnectionButton: (name) => `测试 ${name}`,
+    testing: '测试中...',
+    testSuccess: '测试成功',
+    testFailed: '测试失败',
+    newMailToastTitle: (count) => `收到 ${count} 封新邮件，点击可打开`,
+    systemNotificationTitle: '有新邮件',
+    closeLabel: '关闭',
+    syncNowBottomName: '立即同步',
+    syncNowBottomDesc: '备用入口：和顶部“立即同步邮件”按钮功能相同',
+    busy: 'Email Importer: 正在同步中，请稍候',
+    noAccounts: 'Email Importer: 请先在设置中启用至少一个邮箱账号',
+    syncStart: (count) => `Email Importer: 开始同步 ${count} 个邮箱...`,
+    accountFailed: (name, error) => `同步 ${name} 失败：${error}`,
+    syncDone: (imported, skipped) => `Email Importer: 同步完成，导入 ${imported} 封，过滤 ${skipped} 封`,
+    autoSyncDone: (imported, skipped) => `Email Importer: 自动同步导入 ${imported} 封新邮件，过滤 ${skipped} 封`,
+    connectionOk: (name) => `Email Importer: ${name} 连接成功`,
+    connectionFail: (name, error) => `Email Importer: ${name} 连接失败：${error}`,
+  },
+  en: {
+    title: 'Email Importer Settings',
+    languageName: 'Interface Language',
+    languageDesc: 'Change the settings page language',
+    zhOption: '中文',
+    enOption: 'English',
+    syncNowName: '📥 Sync Now',
+    syncNowDesc: 'Main entry: sync all enabled mailboxes now',
+    syncButton: 'Start Sync',
+    autoSyncName: 'Auto Sync',
+    autoSyncDesc: 'Poll new mail on a fixed interval; Message-ID dedupe still prevents duplicates',
+    autoSyncSavedNotice: 'Email Importer: auto-sync saved; reload the plugin or restart Obsidian to apply',
+    standardFoldersReadyNotice: 'Email Importer: standard folders checked/created',
+    autoSyncIntervalName: 'Auto Sync Interval (minutes)',
+    autoSyncIntervalDesc: 'Examples: 1, 10, 30. 10+ minutes recommended; too short may hit mailbox limits',
+    outputFolderName: 'Output Folder',
+    outputFolderDesc: 'Global default output folder; per-account output folder takes priority if set',
+    standardRootName: 'Standard Root Folder',
+    standardRootDesc: 'Root folder used for auto-created email folders',
+    autoCreateFoldersName: 'Auto-create Standard Folders',
+    autoCreateFoldersDesc: 'Create: To Sort / Bills / Project / Account / Highlights on load (mail state folders stay in English)',
+    createFoldersNowName: 'Create Standard Folders Now',
+    createFoldersNowDesc: 'Run standard folder creation once manually',
+    createFoldersButton: 'Create Folders',
+    createFoldersNotice: 'Email Importer: standard folders created or already exist',
+    defaultCategoryName: 'Default Category',
+    defaultCategoryDesc: 'Default frontmatter category',
+    summaryLengthName: 'Summary Length',
+    summaryLengthDesc: 'Max characters kept in the summary',
+    filterSectionTitle: 'Mail Filters',
+    filterPriorityDesc: 'Priority: whitelist email > blacklist email > subject keywords. Whitelist/blacklist match sender email only; keywords match subject only.',
+    filterEnabledName: 'Enable Mail Filters',
+    filterEnabledDesc: 'Skip unwanted messages using the rules below; original mail is not deleted',
+    whitelistName: 'Whitelist Emails',
+    whitelistDesc: 'One per line. Matched senders are always imported, e.g. noreply@github.com or @notify.cloudflare.com',
+    blacklistName: 'Blacklist Emails',
+    blacklistDesc: 'One per line. Matched senders are skipped, e.g. @temu.com or ads@example.com',
+    subjectKeywordsName: 'Subject Keywords',
+    subjectKeywordsDesc: 'One per line. Match subject only, e.g. deal / promo / Hot deals',
+    accountsTitle: 'Mail Accounts',
+    accountsDesc: 'Use App Password for Gmail; enable IMAP and use the authorization code for QQ Mail.',
+    accountLabel: 'Account',
+    accountEnabledName: 'Enabled',
+    accountEnabledDesc: 'Include this account in sync',
+    accountDisplayName: 'Display Name',
+    accountDisplayNameDesc: 'e.g. Gmail',
+    imapHostName: 'IMAP Host',
+    imapHostDesc: 'imap.gmail.com / imap.qq.com',
+    portName: 'Port',
+    portDesc: '993',
+    usernameName: 'Username',
+    usernameDesc: 'Email address',
+    passwordName: 'Password / Code',
+    passwordDesc: 'Gmail App Password / QQ authorization code',
+    folderName: 'Folder',
+    folderDesc: 'INBOX',
+    accountOutputName: 'Account Output Folder',
+    accountOutputDesc: 'Optional. Read/write state folders are fixed in English: Read Mail / Unread Mail / Attachments',
+    maxEmailsName: 'Max Emails Per Sync',
+    maxEmailsDesc: '10',
+    syncReadName: 'Sync Read Mail',
+    syncReadDesc: 'Off by default. When enabled, read mail is also synced into separate Read Mail / Unread Mail folders',
+    markSeenName: 'Mark as Read After Sync',
+    markSeenDesc: 'When off, uses BODY.PEEK and does not change read status',
+    testConnectionName: 'Test Connection',
+    testConnectionDesc: 'Verify the current IMAP settings',
+    testConnectionButton: (name) => `Test ${name}`,
+    testing: 'Testing...',
+    testSuccess: 'Success',
+    testFailed: 'Failed',
+    newMailToastTitle: (count) => `${count} new mail(s) received — click to open`,
+    systemNotificationTitle: 'New Mail',
+    closeLabel: 'Close',
+    syncNowBottomName: 'Sync Now',
+    syncNowBottomDesc: 'Backup entry: same as the top Sync Now button',
+    busy: 'Email Importer: syncing now, please wait',
+    noAccounts: 'Email Importer: enable at least one mailbox in settings first',
+    syncStart: (count) => `Email Importer: starting sync for ${count} mailbox(es)...`,
+    accountFailed: (name, error) => `Sync failed for ${name}: ${error}`,
+    syncDone: (imported, skipped) => `Email Importer: sync done, imported ${imported}, skipped ${skipped}`,
+    autoSyncDone: (imported, skipped) => `Email Importer: auto-sync imported ${imported} new mail(s), skipped ${skipped}`,
+    connectionOk: (name) => `Email Importer: ${name} connected successfully`,
+    connectionFail: (name, error) => `Email Importer: ${name} connection failed: ${error}`,
+  }
+};
+
 function mergeAccounts(accounts) {
   const byId = new Map((accounts || []).map((account) => [account.id, account]));
   return DEFAULT_SETTINGS.accounts.map((base) => Object.assign({}, base, byId.get(base.id) || {}));
@@ -695,6 +987,11 @@ function validateAccount(account) {
       throw new Error(`${account.name} 缺少 ${key} 配置`);
     }
   }
+  account.password = normalizeAccountPassword(account.password);
+}
+
+function normalizeAccountPassword(password) {
+  return String(password || '').replace(/\s+/g, '');
 }
 
 function shouldSkipEmail(email, settings) {
@@ -765,13 +1062,15 @@ function parseFetchResponse(lines) {
   const decodedFrom = decodeMimeWords(from || '');
   const bodyText = extractReadableText(rawEmail);
   const attachments = extractAttachments(rawEmail);
+  const externalAttachments = extractExternalAttachmentLinks(bodyText);
   return {
     subject: decodedSubject || '无主题邮件',
     from: decodedFrom || '',
     date: date || '',
     messageId: (messageId || '').trim(),
     bodyText,
-    attachments
+    attachments,
+    externalAttachments
   };
 }
 
@@ -830,16 +1129,38 @@ function extractAttachments(rawEmail) {
   return attachments;
 }
 
+function extractExternalAttachmentLinks(text) {
+  const value = String(text || '');
+  const links = [];
+  const urlRegex = /https?:\/\/mail\.qq\.com\/cgi-bin\/ftnExs_download\?[^\s<>"']+/gi;
+  const urls = [...value.matchAll(urlRegex)].map((match) => match[0].replace(/[),，。；;]+$/g, ''));
+  for (const url of urls) {
+    links.push({
+      name: extractNearbyAttachmentName(value, url) || 'QQ超大附件',
+      url
+    });
+  }
+  return links;
+}
+
+function extractNearbyAttachmentName(text, url) {
+  const before = String(text || '').slice(Math.max(0, String(text || '').indexOf(url) - 160), String(text || '').indexOf(url));
+  const fileMatch = before.match(/([^\s\n\r<>:"|?*]+?\.(?:pdf|docx?|xlsx?|pptx?|zip|rar|7z|jpg|jpeg|png|gif|bmp|webp))/i);
+  return fileMatch?.[1] || '';
+}
+
 function collectAttachments(entityText, attachments, depth = 0) {
   if (depth > 8) return;
   const normalized = String(entityText || '').replace(/\r/g, '');
   const { headers, body } = splitHeadersAndBody(normalized);
-  const contentType = getHeaderValue(headers, 'Content-Type').toLowerCase();
-  const contentDisposition = getHeaderValue(headers, 'Content-Disposition').toLowerCase();
+  const rawContentType = getHeaderValue(headers, 'Content-Type');
+  const rawContentDisposition = getHeaderValue(headers, 'Content-Disposition');
+  const contentType = rawContentType.toLowerCase();
+  const contentDisposition = rawContentDisposition.toLowerCase();
   const fallbackBoundary = extractBoundaryFromText(body);
 
   if (contentType.includes('multipart/') || fallbackBoundary) {
-    const boundary = extractBoundary(contentType) || fallbackBoundary;
+    const boundary = extractBoundary(rawContentType) || fallbackBoundary;
     if (!boundary) return;
     const parts = splitMimeParts(body, boundary);
     for (const part of parts) {
@@ -849,7 +1170,7 @@ function collectAttachments(entityText, attachments, depth = 0) {
   }
 
   if (!isAttachmentPart(contentType, contentDisposition)) return;
-  const filename = extractAttachmentFilename(headers, contentType, contentDisposition);
+  const filename = extractAttachmentFilename(headers, rawContentType, rawContentDisposition);
   const transferEncoding = getHeaderValue(headers, 'Content-Transfer-Encoding').toLowerCase();
   const content = decodeTransferEncodingToBuffer(body, transferEncoding);
   if (!content.length) return;
@@ -864,8 +1185,10 @@ function parseMimeEntity(entityText, depth = 0) {
   if (depth > 8) return '';
   const normalized = String(entityText || '').replace(/\r/g, '');
   const { headers, body } = splitHeadersAndBody(normalized);
-  const contentType = getHeaderValue(headers, 'Content-Type').toLowerCase();
-  const contentDisposition = getHeaderValue(headers, 'Content-Disposition').toLowerCase();
+  const rawContentType = getHeaderValue(headers, 'Content-Type');
+  const rawContentDisposition = getHeaderValue(headers, 'Content-Disposition');
+  const contentType = rawContentType.toLowerCase();
+  const contentDisposition = rawContentDisposition.toLowerCase();
   const fallbackBoundary = extractBoundaryFromText(body);
 
   if (isAttachmentPart(contentType, contentDisposition)) {
@@ -873,7 +1196,7 @@ function parseMimeEntity(entityText, depth = 0) {
   }
 
   if (contentType.includes('multipart/') || fallbackBoundary) {
-    const boundary = extractBoundary(contentType) || fallbackBoundary;
+    const boundary = extractBoundary(rawContentType) || fallbackBoundary;
     if (boundary) {
       const parts = splitMimeParts(body, boundary);
       const plainParts = [];
@@ -881,8 +1204,10 @@ function parseMimeEntity(entityText, depth = 0) {
 
       for (const part of parts) {
         const partHeaders = splitHeadersAndBody(part).headers;
-        const partType = getHeaderValue(partHeaders, 'Content-Type').toLowerCase();
-        const partDisposition = getHeaderValue(partHeaders, 'Content-Disposition').toLowerCase();
+        const rawPartType = getHeaderValue(partHeaders, 'Content-Type');
+        const rawPartDisposition = getHeaderValue(partHeaders, 'Content-Disposition');
+        const partType = rawPartType.toLowerCase();
+        const partDisposition = rawPartDisposition.toLowerCase();
         if (isAttachmentPart(partType, partDisposition)) continue;
         if (partType.includes('text/plain')) {
           const text = parseMimeEntity(part, depth + 1);
@@ -896,8 +1221,10 @@ function parseMimeEntity(entityText, depth = 0) {
 
       for (const part of parts) {
         const partHeaders = splitHeadersAndBody(part).headers;
-        const partType = getHeaderValue(partHeaders, 'Content-Type').toLowerCase();
-        const partDisposition = getHeaderValue(partHeaders, 'Content-Disposition').toLowerCase();
+        const rawPartType = getHeaderValue(partHeaders, 'Content-Type');
+        const rawPartDisposition = getHeaderValue(partHeaders, 'Content-Disposition');
+        const partType = rawPartType.toLowerCase();
+        const partDisposition = rawPartDisposition.toLowerCase();
         if (isAttachmentPart(partType, partDisposition)) continue;
         if (partType.includes('text/html')) {
           const text = parseMimeEntity(part, depth + 1);
@@ -911,8 +1238,10 @@ function parseMimeEntity(entityText, depth = 0) {
 
       for (const part of parts) {
         const partHeaders = splitHeadersAndBody(part).headers;
-        const partType = getHeaderValue(partHeaders, 'Content-Type').toLowerCase();
-        const partDisposition = getHeaderValue(partHeaders, 'Content-Disposition').toLowerCase();
+        const rawPartType = getHeaderValue(partHeaders, 'Content-Type');
+        const rawPartDisposition = getHeaderValue(partHeaders, 'Content-Disposition');
+        const partType = rawPartType.toLowerCase();
+        const partDisposition = rawPartDisposition.toLowerCase();
         if (isAttachmentPart(partType, partDisposition)) continue;
         const text = parseMimeEntity(part, depth + 1);
         if (isMeaningfulMailText(text)) return cleanupText(text);
@@ -955,6 +1284,8 @@ function detectAttachmentExt(contentType, content) {
   if (type.includes('png') || bufferStartsWithBytes(content, [0x89, 0x50, 0x4e, 0x47])) return '.png';
   if (type.includes('jpeg') || type.includes('jpg') || bufferStartsWithBytes(content, [0xff, 0xd8, 0xff])) return '.jpg';
   if (type.includes('gif') || bufferStartsWith(content, 'GIF8')) return '.gif';
+  if (type.includes('bmp') || bufferStartsWith(content, 'BM')) return '.bmp';
+  if (type.includes('webp') || bufferStartsWith(content, 'RIFF')) return '.webp';
   return '';
 }
 
@@ -1042,7 +1373,8 @@ function decodeLeafBody(headerText, bodyText, contentType) {
   const transferEncoding = getHeaderValue(headerText, 'Content-Transfer-Encoding').toLowerCase();
   const buffer = decodeTransferEncodingToBuffer(bodyText, transferEncoding);
   const decoded = decodeBufferWithCharset(buffer, charset);
-  const cleaned = contentType.includes('text/html') ? htmlToText(decoded) : decoded;
+  const fallbackDecoded = shouldTryChineseCharset(decoded, charset) ? decodeBufferWithCharset(buffer, 'gb18030') : decoded;
+  const cleaned = contentType.includes('text/html') ? htmlToText(fallbackDecoded) : fallbackDecoded;
   return cleanupText(cleaned);
 }
 
@@ -1062,7 +1394,7 @@ function decodeTransferEncodingToBuffer(bodyText, transferEncoding) {
 
 function decodeLooseQuotedPrintableText(text) {
   const value = String(text || '');
-  if (!/=([A-Fa-f0-9]{2})/.test(value) && !/=3D/.test(value)) return value;
+  if (!looksLikeQuotedPrintableText(value)) return value;
   try {
     return Buffer.from(
       value
@@ -1075,6 +1407,14 @@ function decodeLooseQuotedPrintableText(text) {
   }
 }
 
+function looksLikeQuotedPrintableText(value) {
+  const text = String(value || '');
+  if (/=\r?\n/.test(text)) return true;
+  const matches = text.match(/=([A-Fa-f0-9]{2})/g) || [];
+  if (matches.length < 3) return false;
+  return /=(?:[ECF][0-9A-Fa-f]|3D)/.test(text);
+}
+
 function decodeBufferWithCharset(buffer, charset) {
   try {
     const normalized = normalizeCharset(charset);
@@ -1084,6 +1424,15 @@ function decodeBufferWithCharset(buffer, charset) {
   } catch (_) {
     return buffer.toString('utf8');
   }
+}
+
+function shouldTryChineseCharset(decoded, charset) {
+  const normalized = normalizeCharset(charset);
+  if (!['utf-8', 'us-ascii'].includes(normalized)) return false;
+  const value = String(decoded || '');
+  if (!value) return false;
+  const badChars = (value.match(/�/g) || []).length;
+  return badChars >= 2 || /�QQ|��|�e/.test(value);
 }
 
 function normalizeCharset(charset) {
@@ -1110,6 +1459,7 @@ function isMeaningfulMailText(text) {
 
 function cleanupText(text) {
   return stripMimeResidue(decodeHtmlEntities(decodeLooseQuotedPrintableText(String(text || ''))))
+    .replace(/([\u4e00-\u9fa5])\s+([\u4e00-\u9fa5])/g, '$1$2')
     .replace(/\0/g, '')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
@@ -1196,7 +1546,7 @@ function normalizeFolder(folder) {
 }
 
 function resolveAccountOutputFolder(account, settings, readState = '') {
-  const stateFolder = readState === 'read' ? '已读邮件' : '未读邮件';
+  const stateFolder = readState === 'read' ? 'Read Mail' : 'Unread Mail';
   if (account.outputFolder && account.outputFolder.trim()) {
     return `${normalizeFolder(account.outputFolder)}/${stateFolder}`;
   }
@@ -1269,7 +1619,7 @@ function summarizeText(text, maxLength) {
   return compact.length > maxLength ? compact.slice(0, maxLength) + '…' : compact;
 }
 
-function buildNoteContent({ account, email, date, bodyText, attachmentLinks, category }) {
+function buildNoteContent({ account, email, date, bodyText, attachmentLinks, externalAttachmentLinks, category }) {
   const lines = [
     '---',
     'type: email-note',
@@ -1295,9 +1645,7 @@ function buildNoteContent({ account, email, date, bodyText, attachmentLinks, cat
     `- 来源：${account.name}`,
     '',
     '## 附件',
-    ...(attachmentLinks && attachmentLinks.length
-      ? attachmentLinks.map((attachment) => `- [[${attachment.path}|${attachment.name}]]`)
-      : ['- 无']),
+    ...renderAttachmentList(attachmentLinks, externalAttachmentLinks),
     '',
     '## 待办',
     '- [ ] ',
@@ -1314,4 +1662,37 @@ function buildNoteContent({ account, email, date, bodyText, attachmentLinks, cat
 
 function yamlEscape(value) {
   return JSON.stringify(String(value || ''));
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderAttachmentList(attachmentLinks, externalAttachmentLinks) {
+  const lines = [];
+  if (attachmentLinks && attachmentLinks.length) {
+    lines.push(...attachmentLinks.map((attachment) => renderAttachmentMarkdown(attachment)));
+  }
+  if (externalAttachmentLinks && externalAttachmentLinks.length) {
+    lines.push(...externalAttachmentLinks.map((attachment) => `- [${attachment.name || '外部附件'}](${attachment.url})`));
+  }
+  return lines.length ? lines : ['- 无'];
+}
+
+function renderAttachmentMarkdown(attachment) {
+  if (isImageAttachment(attachment)) {
+    return `- ![[${attachment.path}]]`;
+  }
+  return `- [[${attachment.path}|${attachment.name}]]`;
+}
+
+function isImageAttachment(attachment) {
+  const type = String(attachment?.contentType || '').toLowerCase();
+  const ext = path.posix.extname(String(attachment?.path || attachment?.name || '')).toLowerCase();
+  return type.startsWith('image/') || ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'].includes(ext);
 }
